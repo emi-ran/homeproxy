@@ -94,7 +94,11 @@ func (s *server) register(ctx context.Context, c *quic.Conn) {
 		return
 	}
 	s.mu.Lock()
-	if len(s.agents) >= 2 || s.agents[h.ID] != nil {
+	if old, ok := s.agents[h.ID]; ok {
+		old.conn.CloseWithError(0, "replaced by reconnecting agent")
+		delete(s.agents, h.ID)
+	}
+	if len(s.agents) >= 2 {
 		s.mu.Unlock()
 		return
 	}

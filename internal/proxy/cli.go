@@ -52,6 +52,7 @@ func RunCLI(args []string) error {
 		}
 		token = strings.TrimSpace(string(b))
 	}
+	token = strings.Trim(strings.TrimSpace(token), "\"'")
 	if len(token) < 16 {
 		return errors.New("shared token must contain at least 16 bytes")
 	}
@@ -126,7 +127,7 @@ func RunCLI(args []string) error {
 				break
 			}
 			if e != nil {
-				log.Print("agent disconnected; retry in 3s")
+				log.Printf("agent disconnected (%v); retry in 3s", e)
 			}
 			select {
 			case <-ctx.Done():
