@@ -1,232 +1,229 @@
 # HomeProxy 🚀
 
-> **Headless SOCKS5 over Authenticated QUIC Tunnel**
-> Güvenli, hafif ve merkezi sunucu üzerinden doğrudan çıkış yapmayan, trafiği yetkilendirilmiş ev/uç istemciler (agent) üzerinden yönlendiren modern bir SOCKS5 proxy çözümü.
+> **Headless SOCKS5 over Authenticated QUIC Tunnel**  
+> Güvenli, ultra hafif ve merkezi sunucu üzerinden doğrudan çıkış yapmayan; tüm HTTP, TCP ve UDP (ENet / Oyun) trafiğini yetkilendirilmiş ev/uç istemciler (agent) üzerinden tünelleyerek yönlendiren modern bir SOCKS5 proxy çözümü.
 
 ---
 
-## 📌 Genel Bakış ve Mimari
+## 📑 İçindekiler
+- [Mimari ve Çalışma Mantığı](#-mimari-ve-çalışma-mantığı)
+- [Öne Çıkan Özellikler](#-öne-çıkan-özellikler)
+- [Derleme Kılavuzu (Build)](#-derleme-kılavuzu-build)
+- [1. Dokploy / VDS Sunucu Kurulumu](#1-dokploy--vds-sunucu-kurulumu)
+- [2. Kendi Bilgisayarınız (Windows Agent Kurulumu)](#2-kendi-bilgisayarınız-windows-agent-kurulumu)
+  - [Manuel Çalıştırma](#manuel-çalıştırma)
+  - [PC Açıldığında Otomatik & Arka Planda Başlatma (Tavsiye Edilen)](#pc-açıldığında-otomatik--arka-planda-başlatma-tavsiye-edilen)
+  - [Agent'ı Durdurma](#agentı-durdurma)
+- [3. Dokploy Konteynerlerinde (Mori / Botlar) Kullanım](#3-dokploy-konteynerlerinde-mori--botlar-kullanım)
+- [CLI Parametreleri Referansı](#-cli-parametreleri-referansı)
+- [Test ve Doğrulama](#-test-ve-doğrulama)
+- [Güvenlik Prensipleri](#-güvenlik-prensipleri)
 
-**HomeProxy**, geleneksel proxy sunucularından farklı olarak hedef adresleri sunucu (VDS/VPS) üzerinden **çözümlemez ve doğrudan bağlamaz**. Bunun yerine:
+---
 
-1. **Sunucu (`server`)**: Bulut/VDS üzerinde çalışır; SOCKS5 istemcilerini (TCP ve UDP) kabul eder ve agent'lar ile QUIC (TLS 1.3) üzerinden şifreli, çoklamalı (multiplexed) tünel kurar.
-2. **Uç Ajan (`agent`)**: Evdeki bilgisayar veya yerel ağda çalışır; sunucuya dışarıdan içeri doğru (outbound) güvenli bir QUIC bağlantısı açar. Gelen bağlantı isteklerinde hedef DNS adreslerini çözer ve gerçek çıkışı kendi IP'si üzerinden yapar.
-3. **Yönetim İstemcisi (`select`)**: Yerel Unix domain socket üzerinden sunucuya bağlanarak aktif olarak trafiği aktaran agent'ı anlık olarak değiştirebilir.
+## 📌 Mimari ve Çalışma Mantığı
+
+HomeProxy, hedef adresleri sunucu (VDS/VPS) üzerinden **çözümlemez ve sunucudan çıkış yapmaz**.
 
 ```
- +------------------+           +----------------------+           +------------------+
- |  SOCKS5 Client   |  (TCP)    |   HomeProxy Server   |  (QUIC)   | HomeProxy Agent  |  (Direct)   +-------------+
- | (Browser/Curl)   | --------> | (VDS / Public Cloud) | <======== | (Home PC / Edge) | ----------> | Destination |
- | 127.0.0.1:1080   | (UDP Asso)|   0.0.0.0:4433/udp   | (TLS 1.3) | Residential IP   |             | (Web/API)   |
- +------------------+           +----------------------+           +------------------+             +-------------+
-                                           ^
-                                           | Unix Socket (admin.sock)
-                                    +-------------+
-                                    | Local Admin | (homeproxy select -id pc-b)
-                                    +-------------+
+ +------------------------+              +----------------------+              +--------------------+              +---------------+
+ | Dokploy Bot Konteyneri |   SOCKS5     |   HomeProxy Server   |     QUIC     |  Ev Bilgisayarı    |    Doğrudan  |   Hedef Web   |
+ |  (Mori / Growtopia)    | -----------> |   (VDS / Dokploy)    | <=========== |   (Windows Agent)  | ------------> |    / Oyun     |
+ | 10.0.1.175:1080 (TCP)  | (TCP & ENet) |   Port: 4433/udp     |  (TLS 1.3)   |  Residential IP    |               |  Sunucuları   |
+ | Ephemeral Relay (UDP)  |              |  (Zero-Config TLS)   |              | (192.0.2.10)  |               | (198.51.100.20) |
+ +------------------------+              +----------------------+              +--------------------+              +---------------+
+```
+
+1. **Sunucu (`server`)**: VDS üzerinde çalışır. SOCKS5 istemcilerini (TCP ve UDP) kabul eder ve evdeki agent ile QUIC (TLS 1.3) üzerinden şifreli bir tünel kurar.
+2. **Uç Ajan (`agent`)**: Evdeki PC'de çalışır. Sunucuya dışarıdan içeri (outbound) bağlanır (modemde port açmaya gerek yoktur). Gelen istekleri ev internetinizin IP adresiyle hedefe bağlar.
+3. **Sıfır Yapılandırma (Zero-Config TLS)**: Sunucu, RAM üzerinde otomatik TLS 1.3 sertifikası üretir. Harici domain veya Let's Encrypt sertifikası gerekmez.
+
+---
+
+## ✨ Öne Çıkan Özellikler
+
+- **QUIC & TLS 1.3 Taşıma Katmanı**: Düşük gecikmeli, paket kaybına dirençli UDP tüneli (`quic-go`).
+- **ENet & Oyun UDP Desteği**: SOCKS5 UDP ASSOCIATE trafiği QUIC Datagram (RFC 9221) üzerinden taşınır. Growtopia vb. ENet tabanlı oyun protokolleriyle tam uyumludur.
+- **Docker Swarm Overlay Desteği**: Dokploy iç ağında sanal IP (VIP) kısıtlamalarına takılmadan konteynerler arası dinamik UDP yönlendirmesini otomatik çözer (`getRelayIP`).
+- **Anti-SSRF Güvenlik Kalkanı**: Ev bilgisayarınızın yerel ağına (`192.168.x.x`, `10.x.x.x`, `127.0.0.1`) veya bulut metadata servislerine proxy üzerinden izinsiz erişim engellenir.
+- **Doğrudan Token Girişi (`-token`)**: Ortam değişkeniyle uğraşmadan parametre olarak parola geçebilme kolaylığı.
+
+---
+
+## 🛠️ Derleme Kılavuzu (Build)
+
+Gereksinim: **Go 1.25+**
+
+```bash
+# Proje kök dizininde bağımlılıkları yükleyin
+go mod download
+```
+
+### Windows İçin Derleme (`.exe`)
+```powershell
+# Windows üzerinde çalışıyorsanız doğrudan:
+go build -trimpath -o bin/homeproxy.exe ./cmd/homeproxy
+
+# Linux/macOS üzerinden Windows için çapraz derleme (Cross-Compile):
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy.exe ./cmd/homeproxy
+```
+
+### Linux (VDS / Sunucu) İçin Derleme
+```bash
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy ./cmd/homeproxy
 ```
 
 ---
 
-## ✨ Temel Özellikler
+## 1. Dokploy / VDS Sunucu Kurulumu
 
-- **QUIC & TLS 1.3 Taşıma Katmanı**:
-  - `quic-go` tabanlı düşük gecikmeli, paket kaybına dirençli bağlantı.
-  - SOCKS5 TCP oturumları için çift yönlü (bidirectional) QUIC stream'leri.
-  - SOCKS5 UDP ASSOCIATE trafiği için QUIC Datagram desteği (RFC 9221).
-  - Katı TLS 1.3 sertifika ve DNS/SNI doğrulaması (güvensiz mod bulunmaz).
-- **Esnek Yönlendirme Modları (`-mode`)**:
-  - `priority`: En düşük sayısal önceliğe (priority) sahip agent seçilir. Öncelik eşitliğinde sözlük sırasına göre ID seçilir.
-  - `automatic`: İlk seçim önceliğe göre yapılır; ardından agent sağlıklı kaldığı sürece ona sabitlenir (sticky). Çökme durumunda yedek agent'a geçer ve ona sabitlenir.
-  - `manual`: Manuel seçim yapılana kadar öncelik bazlı yedek çalışır; yerel soket üzerinden seçim yapıldığında o agent aktif kalır.
-- **Yerel Yönetim Soketi (`listenManagement`)**:
-  - Dosya izinleri `0600` olan Unix domain socket üzerinden güvenli, paylaşımlı token doğrulaması ile dinamik agent seçimi (`homeproxy select`).
-- **Gelişmiş Güvenlik ve Anti-SSRF Koruması**:
-  - Agent çıkışlarında loopback, özel ağ (RFC 1918), paylaşımlı adres blokları (`100.64.0.0/10` - bulut metadata servisleri dahil), link-local ve multicast IP adresleri hem sayısal hem de DNS çözümlemelerinde otomatik olarak engellenir (`-allow-private` yalnızca testler içindir).
-  - SOCKS5 arabirimi şifresizdir; bu nedenle yalnızca yerel veya izole özel ağlarda çalıştırılmak üzere tasarlanmıştır.
-- **Sıkı Kaynak Sınırları**:
-  - Maksimum 2 kimlik doğrulanmış agent, 4 bağlantı kabul yuvası (admission slots).
-  - 128 eşzamanlı SOCKS oturumu ve 128 QUIC akışı.
-  - QUIC datagram tavanı: 8 baytlık oturum ID'si dahil **1100 bayt**.
-  - UDP akışı için 60 saniye hareketsizlik (idle) zaman aşımı (başarılı giden pakette yenilenir) ve 1 saatlik bağımsız mutlak oturum ömrü (hard lifetime).
+HomeProxy, Dokploy üzerinde **Application** (Docker Swarm) olarak çalışacak şekilde optimize edilmiştir.
+
+### Dokploy Panelinde Ayarlar:
+1. **Kaynak (Source)**: GitHub reponuzu seçin (`main` veya `master` branch).
+2. **Build Type**: `Dockerfile` (Proje kökündeki çok-aşamalı minimal Dockerfile otomatik kullanılır).
+3. **Environment (Ortam Değişkenleri)**:
+   ```env
+   HOMEPROXY_TOKEN="REPLACE_WITH_A_STRONG_RANDOM_TOKEN"
+   ```
+4. **Port Yapılandırması**:
+   - `4433:4433/udp` ➡️ **Host Mode** seçin (Evdeki agent'ın QUIC tüneliyle bağlanabilmesi için dışarı açık olmalı).
+   - `1080` ➡️ **Yalnızca Dahili Ağ** (Dışarı port mapping yapmayın! SOCKS5 dışarıdan şifresiz taranmamalı, sadece Dokploy iç ağındaki botlar erişmelidir).
+5. **Deploy**: **Deploy** butonuna tıklayın.
+
+Sunucu ayağa kalktığında `docker logs` üzerinde şunu görmelisiniz:
+```text
+zero-config: generated self-signed TLS 1.3 certificate
+server ready
+```
 
 ---
 
-## 📂 Proje Klasör Düzeni
+## 2. Kendi Bilgisayarınız (Windows Agent Kurulumu)
 
-Proje, Go standart proje düzenine (Standard Go Project Layout) uygun olarak yeniden organize edilmiş ve derli toplu hale getirilmiştir:
+Evdeki Windows bilgisayarınız trafiğin internete çıkacağı uç noktadır.
+
+### Manuel Çalıştırma
+PowerShell açıp doğrudan çalıştırabilirsiniz:
+```powershell
+.\bin\homeproxy.exe agent -quic 203.0.113.10:4433 -id ev-pc -insecure -token "REPLACE_WITH_A_STRONG_RANDOM_TOKEN"
+```
+
+---
+
+### PC Açıldığında Otomatik & Arka Planda Başlatma (Tavsiye Edilen)
+
+Bilgisayarınızı her açtığınızda **siyah konsol ekranı açılmadan**, tamamen arka planda sessiz sedasız çalışması için Windows Başlangıç klasörüne gizli bir VBScript kaydedebilirsiniz:
+
+#### Tek Komutla Kurulum:
+PowerShell'i açın ve kendi VDS IP'nizi / Token'ınızı yazarak yapıştırın:
+
+```powershell
+$vbsPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\homeproxy-agent.vbs"
+$cmd = '"""C:\Users\YOUR_USER\Documents\GitHub\homeproxy\bin\homeproxy.exe"" agent -quic 203.0.113.10:4433 -id ev-pc -insecure -token REPLACE_WITH_A_STRONG_RANDOM_TOKEN'
+$content = "Set WshShell = CreateObject(`"WScript.Shell`")`r`nWshShell.Run `"$cmd`", 0, False"
+[System.IO.File]::WriteAllText($vbsPath, $content)
+```
+
+> **Hemen Başlatmak İçin:**
+> ```powershell
+> wscript.exe "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\homeproxy-agent.vbs"
+> ```
+
+#### Durumu Kontrol Etme:
+Agent'ın arka planda çalıştığını doğrulamak için:
+```powershell
+Get-Process -Name homeproxy
+```
+*(Görev Yöneticisi ➡️ Ayrıntılar sekmesinde `homeproxy.exe` olarak görünür).*
+
+---
+
+### Agent'ı Durdurma
+Arka plandaki agent'ı sonlandırmak istediğinizde:
+```powershell
+Stop-Process -Name homeproxy -Force
+```
+
+**Otomatik Başlangıçtan Kaldırmak İçin:**
+```powershell
+Remove-Item "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\homeproxy-agent.vbs"
+```
+
+---
+
+## 3. Dokploy Konteynerlerinde (Mori / Botlar) Kullanım
+
+Dokploy üzerindeki Mori veya diğer bot araçlarında proxy alanına girmeniz gereken bilgi:
 
 ```text
-homeproxy/
-├── cmd/
-│   └── homeproxy/
-│       └── main.go                 # Uygulama CLI giriş noktası (server, agent, select)
-├── internal/
-│   └── proxy/
-│       ├── address.go              # SOCKS5 adres kodlayıcı/çözücü ve güvenli hedef denetleyicisi
-│       ├── agent.go                # Outbound agent döngüsü, stream işleyicisi ve çıkış bağlantıları
-│       ├── cli.go                  # CLI bayraklarının (flags) ayrıştırılması ve komut yürütücüsü
-│       ├── manage.go               # Unix domain socket sunucusu ve yönetim istekleri
-│       ├── proxy.go                # Çekirdek veri yapıları (server, agentPeer) ve yönlendirme algoritmaları
-│       ├── server.go               # QUIC agent dinleyicisi, slot kontrolü ve SOCKS5 sunucusu
-│       ├── transport.go            # QUIC stream köprüleme (bridge) ve TCP yarım-kapanış (half-close)
-│       ├── udp.go                  # SOCKS5 UDP ASSOCIATE geçişi ve QUIC datagram paketleyicisi
-│       ├── integration_test.go     # Uçtan uca entegrasyon testleri (TLS, TCP/UDP echo, failover)
-│       ├── manage_test.go          # Yönetim soketi kimlik doğrulama testleri
-│       ├── proxy_test.go           # Yönlendirme ve sticky seçim birim testleri
-│       ├── reply_test.go           # SOCKS5 yanıt kodları ve bağlı adres testleri
-│       ├── security_cleanup_test.go# Anti-SSRF, sıfırlama (reset) ve bellek sızıntı testleri
-│       └── signal_test.go          # Zarif kapatma (SIGTERM) testi
-├── docs/
-│   └── VERIFY.md                   # Doğrulama test geçmişi ve güvenlik inceleme notları
-├── Dockerfile                      # Üretim için minimal çok-aşamalı (multi-stage) Docker yapısı
-├── compose.yaml                    # Ağ izolasyonlu Docker Compose yapılandırması
-├── go.mod                          # Go modül bağımlılıkları
-├── go.sum                          # Modül sağlama toplamları (checksums)
-└── README.md                       # Kapsamlı proje dokümantasyonu
+growtopia-homeproxy-ixjh7l:1080
+```
+*(veya Mori otomatik kaydettiğinde Dokploy ağ IP'si: `10.0.1.175:1080`)*
+
+- **Kullanıcı adı ve Şifre**: Boş bırakın.
+- **Protokol**: SOCKS5 (TCP + UDP).
+
+### Test Sonuçları:
+Mori **Proxy Tester** çalıştırıldığında 3 adım da yeşil yanacaktır:
+- [x] **SOCKS5**: Bağlantı tokalaşması başarılı.
+- [x] **server_data**: HTTP/TCP üzerinden Growtopia sunucu verileri ev IP'nizle çekildi.
+- [x] **ENet UDP**: Oyun içi UDP paketleri QUIC datagram üzerinden ev PC'niz ile çift yönlü aktarıldı.
+
+### VDS Üzerinden Test Etme:
+VDS terminalinden proxy'nin ev IP'niz üzerinden çıktığını doğrulamak için:
+```bash
+curl --socks5 127.0.0.1:1080 https://ifconfig.me
+# Çıktı: Ev internetinizin IP adresi (Örn: 192.0.2.10)
 ```
 
 ---
 
-## 🛠️ Kurulum ve Derleme
+## 📖 CLI Parametreleri Referansı
 
-### Gereksinimler
-- **Go**: 1.25 veya üzeri
-- Linux / macOS / Windows desteği (Agent Windows üzerinde de sorunsuz çalışır)
+HomeProxy 3 farklı modda çalıştırılabilir: `server`, `agent` ve `select`.
 
-### Yerel Olarak Derleme
-
-```bash
-# Bağımlılıkları kontrol edin
-go mod download
-
-# Linux / macOS ikilisini derleyin
-go build -trimpath -o bin/homeproxy ./cmd/homeproxy
-
-# Windows için çapraz derleme (cross-compile)
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy-windows-amd64.exe ./cmd/homeproxy
-```
-
----
-
-## 🚀 Kullanım Kılavuzu
-
-Uygulama tek bir ikili dosya üzerinden üç farklı modda çalıştırılır: `server`, `agent` ve `select`.
-
-> **Güvenlik Notu**: Kimlik doğrulama parolası (`token`) en az **16 bayt** olmalıdır. Token'ı komut satırı argümanı olarak geçmeyin; `HOMEPROXY_TOKEN` ortam değişkeni veya `-token-file` bayrağı ile sağlayın.
-
-### 1. Sunucu Modu (`server`)
-
-Sunucuyu QUIC ve SOCKS5 portları ile başlatır:
-
-```bash
-# Hızlı / Sıfır Yapılandırma (Zero-Config) - Sertifika gerekmez!
-export HOMEPROXY_TOKEN="REPLACE_WITH_A_STRONG_RANDOM_TOKEN"
-./bin/homeproxy server -quic 0.0.0.0:4433 -socks 127.0.0.1:1080
-
-# Veya Özel Sertifika ile Başlatma:
-./bin/homeproxy server \
-  -quic 0.0.0.0:4433 \
-  -socks 127.0.0.1:1080 \
-  -cert /etc/ssl/homeproxy/cert.pem \
-  -key /etc/ssl/homeproxy/key.pem \
-  -token-file "$HOME/.homeproxy/token" \
-  -admin-socket "$HOME/.homeproxy/admin.sock" \
-  -mode priority
-```
-
+### `agent` Parametreleri
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
-| `-quic` | `127.0.0.1:4433` | Agent'ların bağlanacağı genel QUIC adresi/portu |
-| `-socks` | `127.0.0.1:1080` | SOCKS5 istemcilerinin bağlanacağı özel adres |
-| `-cert` | `""` | TLS sunucu sertifikası (PEM) - Boşsa otomatik üretilir (Zero-config) |
-| `-key` | `""` | TLS sunucu özel anahtarı (PEM) - Boşsa otomatik üretilir |
-| `-mode` | `priority` | Yönlendirme modu: `priority`, `automatic`, `manual` |
-| `-token-file` | `""` | Paylaşımlı gizli anahtar dosyası |
-| `-admin-socket`| `/run/homeproxy/admin.sock` | Yerel Unix yönetim soketi yolu |
+| `-quic` | `127.0.0.1:4433` | Uzak QUIC sunucu adresi (`IP:port` veya `domain:port`) |
+| `-token` | `""` | Kimlik doğrulama parolası (en az 16 karakter) |
+| `-token-file`| `""` | Parolanın okunacağı dosya yolu |
+| `-id` | `""` | Agent tanımlayıcısı (Örn: `ev-pc`) |
+| `-priority` | `100` | Öncelik derecesi (küçük sayı daha yüksek önceliktir) |
+| `-insecure` | `false` | Self-signed sertifikalı sunucularda sertifika onayını atlar |
+| `-allow-private` | `false` | **Tehlikeli**: Agent'ın yerel IP adreslerine bağlanmasına izin verir |
 
----
-
-### 2. Ajan Modu (`agent`)
-
-Ev bilgisayarında veya yerel ağdaki sunucuda çalıştırılır. Sunucuya outbound QUIC bağlantısı kurar:
-
-```bash
-# Sıfır Yapılandırma Modu (Self-signed sunucu sertifikası için -insecure):
-./bin/homeproxy agent -quic VDS_IP:4433 -id home-pc -insecure
-
-# Özel Domain ve Sertifika ile:
-./bin/homeproxy agent \
-  -quic proxy.example.com:4433 \
-  -server-name proxy.example.com \
-  -id home-pc-a \
-  -priority 10 \
-  -token-file token
-```
-
+### `server` Parametreleri
 | Parametre | Varsayılan | Açıklama |
 |---|---|---|
-| `-quic` | `127.0.0.1:4433` | Uzak QUIC sunucu adresi (`domain:port` veya `ip:port`) |
-| `-server-name` | `""` | TLS sertifikasındaki DNS adı (SNI doğrulaması) |
-| `-id` | `""` | Agent benzersiz tanımlayıcısı |
-| `-priority` | `100` | Öncelik derecesi (düşük sayı daha yüksek önceliktir) |
-| `-insecure` | `false` | **Zero-Config**: Sunucu sertifika doğrulamasını atlar (Self-signed modda gerekir) |
-| `-ca` | `""` | Özel CA sertifikası yolu (boş bırakılırsa sistem kökleri kullanılır) |
-| `-allow-private`| `false` | **DİKKAT**: Özel/yerel IP çıkışına izin verir (yalnızca test ortamları için) |
+| `-quic` | `127.0.0.1:4433` | Agent'ların bağlanacağı genel QUIC dinleme portu |
+| `-socks` | `127.0.0.1:1080` | SOCKS5 dinleme adresi |
+| `-token` | `""` | Kimlik doğrulama parolası |
+| `-mode` | `priority` | Seçim modu: `priority`, `automatic`, `manual` |
+| `-cert` / `-key` | `""` | Özel TLS sertifika dosyaları (Boşsa self-signed üretilir) |
 
 ---
 
-### 3. Yönetim Modu (`select`)
+## 🧪 Test ve Doğrulama
 
-Sunucu üzerindeki aktif agent seçimini manuel olarak değiştirmek için kullanılır:
-
-```bash
-./bin/homeproxy select \
-  -id home-pc-b \
-  -token-file "$HOME/.homeproxy/token" \
-  -admin-socket "$HOME/.homeproxy/admin.sock"
-```
-
-İşlem başarılı olduğunda ekrana `ok` yazdırılır; yetkisiz veya geçersiz isteklerde hata verilir.
-
----
-
-## 🐳 Docker ve Compose Kullanımı
-
-Depoda hazır bulunan `Dockerfile` ve `compose.yaml` ile güvenli ve yalıtılmış bir sunucu konteyneri çalıştırabilirsiniz:
+Tüm testler ve yarış durumu (race detector) kontrolleri:
 
 ```bash
-docker compose up -d
-```
-
-### Konteyner Ağ Güvenliği
-- Konteyner yalnızca **UDP 4433** portunu dış dünyaya açar (`ports: ["4433:4433/udp"]`).
-- `socks` portu (1080) dış dünyaya açılmaz; yalnızca `private` dahili Docker ağına bağlı diğer servisler tarafından erişilebilir.
-- Dosya sistemi salt okunurdur (`read_only: true`); yetkiler en aza indirilmiştir (`cap_drop: [ALL]`, `no-new-privileges: true`).
-
----
-
-## 🧪 Testler ve Doğrulama
-
-Tüm testler yerel ortamda sahte/geçici (ephemeral) sertifikalarla uçtan uca çalıştırılabilir:
-
-```bash
-# Tüm test paketini çalıştırın
+# Tüm birim ve entegrasyon testlerini çalıştırın
 go test -v ./...
 
-# Yarış durumu (race detector) kontrolü ile test edin
+# Yarış durumu kontrolü
 go test -race ./...
 
-# Statik kod analizi yapın
+# Statik analiz
 go vet ./...
 ```
 
-Daha ayrıntılı doğrulama geçmişi ve güvenlik inceleme kayıtları için [docs/VERIFY.md](docs/VERIFY.md) belgesini inceleyebilirsiniz.
-
 ---
 
-## 🔒 Güvenlik İlkeleri ve Tavsiyeler
+## 🔒 Güvenlik Prensipleri
 
-1. **SOCKS Portunu Asla Dış Dünyaya Açmayın**: SOCKS5 protokolü kimlik doğrulamasız kurulur. Bu nedenle yalnızca `127.0.0.1` veya güvenilir iç ağlarda (Docker private bridge, WireGuard/Tailscale VPN) dinletilmelidir.
-2. **Güvenlik Duvarı (Firewall)**: Sunucunun QUIC portuna gelen istekler için olası saldırılara karşı güvenlik duvarı hız sınırlandırması (rate limiting) uygulanması önerilir.
-3. **Zarif Kapanış**: Agent veya sunucu `Ctrl+C` veya `SIGTERM` sinyali aldığında açık tünelleri ve soketleri temizleyerek zarif şekilde kapanır.
+1. **SOCKS Portunu Asla Dış Dünyaya Açmayın**: SOCKS5 protokolü kimlik doğrulamasız kurulur. Bu port sadece `127.0.0.1` veya Docker'ın izole dahili ağında (`dokploy-network`) kalmalıdır.
+2. **Güçlü Token**: Paylaşılan token en az 16 karakterden oluşmalı ve gizli tutulmalıdır.
+3. **Anti-SSRF**: Ev PC'nizin bağlı olduğu yerel ağdaki modem, NAS veya yazıcılar proxy üzerinden gelebilecek isteklerden korunur.
