@@ -32,6 +32,7 @@ func RunCLI(args []string) error {
 	ca := f.String("ca", "", "agent CA PEM (otherwise system roots)")
 	name := f.String("server-name", "", "TLS certificate DNS name")
 	tokenFile := f.String("token-file", "", "shared token file (otherwise HOMEPROXY_TOKEN)")
+	tokenFlag := f.String("token", "", "shared token string (otherwise HOMEPROXY_TOKEN or token-file)")
 	id := f.String("id", "", "agent ID or selection target")
 	priority := f.Int("priority", 100, "lower wins")
 	mode := f.String("mode", "priority", "priority, automatic, manual")
@@ -42,7 +43,9 @@ func RunCLI(args []string) error {
 		return e
 	}
 	token := os.Getenv("HOMEPROXY_TOKEN")
-	if *tokenFile != "" {
+	if *tokenFlag != "" {
+		token = *tokenFlag
+	} else if *tokenFile != "" {
 		b, e := os.ReadFile(*tokenFile)
 		if e != nil {
 			return e
