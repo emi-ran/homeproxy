@@ -119,9 +119,11 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 		return
 	}
 	c.SetDeadline(time.Now().Add(time.Hour))
+	defer c.Close()
 	done := make(chan struct{})
 	defer close(done)
 	go func() { io.Copy(io.Discard, c); u.Close(); q.Close() }()
+	go func() { io.Copy(io.Discard, q); c.Close(); u.Close() }()
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -159,6 +161,9 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 		if e != nil {
 			return
 		}
+		if _, _, e = parsePacket(buf[:n]); e != nil {
+			continue
+		}
 		mu.Lock()
 		valid := from.IP.Equal(source.IP) && (source.Port == 0 || source.Port == from.Port)
 		if valid && source.Port == 0 {
@@ -166,9 +171,6 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 		}
 		mu.Unlock()
 		if !valid {
-			continue
-		}
-		if _, _, e = parsePacket(buf[:n]); e != nil {
 			continue
 		}
 		sendDatagram(p.conn, id, buf[:n])
@@ -200,6 +202,10 @@ func agentDatagrams(c *quic.Conn) {
 	}
 }
 func agentUDP(c *quic.Conn, q *quic.Stream, allow bool) {
+	agentUDPTimeouts(c, q, allow, 60*time.Second, time.Hour)
+}
+
+func agentUDPTimeouts(c *quic.Conn, q *quic.Stream, allow bool, idle, lifetime time.Duration) {
 	defer q.Close()
 	defer q.CancelRead(0)
 	u, e := net.ListenUDP("udp", nil)
@@ -211,8 +217,9 @@ func agentUDP(c *quic.Conn, q *quic.Stream, allow bool) {
 	queue := make(chan []byte, 32)
 	agentQueues.Store(key, queue)
 	defer agentQueues.Delete(key)
+	u.SetReadDeadline(time.Now().Add(idle))
 	q.Write([]byte{0})
-	q.SetDeadline(time.Now().Add(time.Hour))
+	q.SetDeadline(time.Now().Add(lifetime))
 	done := make(chan struct{})
 	defer close(done)
 	go func() { io.Copy(io.Discard, q); u.Close() }()
@@ -243,7 +250,9 @@ func agentUDP(c *quic.Conn, q *quic.Stream, allow bool) {
 				}
 				mu.Unlock()
 				if ok {
-					u.WriteToUDP(data, dst)
+					if _, e := u.WriteToUDP(data, dst); e == nil {
+						u.SetReadDeadline(time.Now().Add(idle))
+					}
 				}
 			case <-done:
 				return
@@ -252,7 +261,6 @@ func agentUDP(c *quic.Conn, q *quic.Stream, allow bool) {
 	}()
 	b := make([]byte, 65535)
 	for {
-		u.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, from, e := u.ReadFromUDP(b)
 		if e != nil {
 			return
@@ -263,6 +271,7 @@ func agentUDP(c *quic.Conn, q *quic.Stream, allow bool) {
 		if !ok {
 			continue
 		}
+		u.SetReadDeadline(time.Now().Add(idle))
 		a, _ := encodeAddress(from.String())
 		packet := append(append([]byte{0, 0, 0}, a...), b[:n]...)
 		sendDatagram(c, key.id, packet)

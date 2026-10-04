@@ -106,7 +106,9 @@ func safeTarget(ctx context.Context, addr string, allow bool) (string, error) {
 	}
 	for _, v := range ips {
 		ip := v.IP
-		if !allow && (ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() || !ip.IsGlobalUnicast()) {
+		v4 := ip.To4()
+		shared := v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 64
+		if !allow && (shared || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() || !ip.IsGlobalUnicast()) {
 			return "", errors.New("non-public destination blocked")
 		}
 	}
@@ -118,10 +120,25 @@ func bridge(c net.Conn, q *quic.Stream) {
 	q.SetDeadline(time.Now().Add(time.Hour))
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); io.Copy(q, c); q.Close() }()
+	abort := func() {
+		c.Close()
+		q.CancelRead(1)
+		q.CancelWrite(1)
+	}
 	go func() {
 		defer wg.Done()
-		io.Copy(c, q)
+		if _, e := io.Copy(q, c); e != nil {
+			abort()
+		} else {
+			q.Close()
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if _, e := io.Copy(c, q); e != nil {
+			abort()
+			return
+		}
 		if t, ok := c.(*net.TCPConn); ok {
 			t.CloseWrite()
 		}

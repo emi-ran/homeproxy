@@ -18,4 +18,17 @@ All commands serialized with `GOMAXPROCS=2 GOFLAGS=-p=1`.
 
 Host quic-go warning: receive buffer 208 KiB requested 7168 KiB, obtained 416 KiB. Oversize test logged `oversize UDP dropped`, expected. No kernel configuration changes.
 
+## Security/cleanup review fixes
+
+- RED confirmed shared-range numeric/mapped IPv4 and synthetic DNS answers accepted; GREEN rejects 100.64.0.0/10 through shared TCP/UDP destination policy, preserves adjacent public ranges and explicit fixture override.
+- RED TCP reset and QUIC stream reset left bridge blocked; GREEN returns promptly while existing clean half-close test passes.
+- RED individual UDP stream EOF/reset left SOCKS control open; GREEN closes control and removes relay registration without killing QUIC connection.
+- RED 200ms idle timeout killed sustained one-way UDP; GREEN successful outbound writes refresh idle and independent 900ms hard lifetime still expires under traffic. Durations injected per invocation, no mutable global timeouts.
+- RED malformed FRAG packet pinned unspecified UDP source port; GREEN subsequent valid sender succeeds.
+- RED Unix SIGTERM killed helper process; GREEN CLI exits normally. syscall.SIGTERM also cross-compiles on Windows; no build-specific production files needed.
+- Final `go test -count=1 -v ./...`: `ok homeproxy 21.965s`.
+- Final `go test -race -count=1 ./...`: `ok homeproxy 24.219s`, no race reports.
+- Final `go vet ./...`, Linux build, Windows amd64 cross-build, `git diff --check`: exit 0. Refreshed `bin/homeproxy` and `bin/homeproxy-windows-amd64.exe` (ignored artifacts).
+- Existing four-slot/10s registration bound assessed; remaining handshake DoS and reconnect starvation documented in README, not represented as production protection.
+
 No Docker builds/runs, deployment, remote PC egress test, Windows runtime test, Android build or push.
