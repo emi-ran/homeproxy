@@ -9,3 +9,4 @@ RUN apk add --no-cache ca-certificates && adduser -D -u 10001 proxy && mkdir /ru
 COPY --from=build /homeproxy /usr/local/bin/homeproxy
 USER proxy
 ENTRYPOINT ["homeproxy"]
+CMD ["server", "-quic", "0.0.0.0:4433", "-socks", "0.0.0.0:1080", "-cert", "/secrets/cert.pem", "-key", "/secrets/key.pem"]

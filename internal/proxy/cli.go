@@ -58,19 +58,33 @@ func RunCLI(args []string) error {
 		if *mode != "priority" && *mode != "automatic" && *mode != "manual" {
 			return errors.New("invalid routing mode")
 		}
-		pair, e := tls.LoadX509KeyPair(*cert, *key)
-		if e != nil {
-			return e
+		var pair tls.Certificate
+		var certErr error
+		if *cert != "" && *key != "" {
+			pair, certErr = tls.LoadX509KeyPair(*cert, *key)
+		}
+		if certErr != nil || *cert == "" || *key == "" {
+			if os.Getenv("HOMEPROXY_CERT") != "" && os.Getenv("HOMEPROXY_KEY") != "" {
+				var e error
+				pair, e = tls.X509KeyPair([]byte(os.Getenv("HOMEPROXY_CERT")), []byte(os.Getenv("HOMEPROXY_KEY")))
+				if e != nil {
+					return fmt.Errorf("invalid HOMEPROXY_CERT/HOMEPROXY_KEY: %w", e)
+				}
+			} else if certErr != nil {
+				return certErr
+			} else {
+				return errors.New("server requires -cert and -key files (or HOMEPROXY_CERT and HOMEPROXY_KEY env vars)")
+			}
 		}
 		s := newServer(token, *mode)
-		if e = s.listenManagement(ctx, *admin); e != nil {
-			return e
+		if err := s.listenManagement(ctx, *admin); err != nil {
+			return err
 		}
-		if _, e = s.listenQUIC(ctx, *addr, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}, NextProtos: []string{"homeproxy/1"}}); e != nil {
-			return e
+		if _, err := s.listenQUIC(ctx, *addr, &tls.Config{MinVersion: tls.VersionTLS13, Certificates: []tls.Certificate{pair}, NextProtos: []string{"homeproxy/1"}}); err != nil {
+			return err
 		}
-		if _, e = s.listenSOCKS(ctx, *socks); e != nil {
-			return e
+		if _, err := s.listenSOCKS(ctx, *socks); err != nil {
+			return err
 		}
 		log.Print("server ready")
 		<-ctx.Done()
