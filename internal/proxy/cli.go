@@ -101,6 +101,12 @@ func RunCLI(args []string) error {
 		if *id == "" || (*name == "" && !*insecure) {
 			return errors.New("id and server-name required")
 		}
+		mutexName := "Local\\HomeProxyAgent_" + *id
+		unlock, ok := acquireInstanceLock(mutexName)
+		if !ok {
+			return nil
+		}
+		defer unlock()
 		serverName := *name
 		if serverName == "" {
 			serverName = "homeproxy"
