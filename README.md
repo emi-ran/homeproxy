@@ -47,6 +47,7 @@ HomeProxy, hedef adresleri sunucu (VDS/VPS) üzerinden **çözümlemez ve sunucu
 - **Docker Swarm Overlay Desteği**: Dokploy iç ağında sanal IP (VIP) kısıtlamalarına takılmadan konteynerler arası dinamik UDP yönlendirmesini otomatik çözer (`getRelayIP`).
 - **Anti-SSRF Güvenlik Kalkanı**: Ev bilgisayarınızın yerel ağına (`192.168.x.x`, `10.x.x.x`, `127.0.0.1`) veya bulut metadata servislerine proxy üzerinden izinsiz erişim engellenir.
 - **Doğrudan Token Girişi (`-token`)**: Ortam değişkeniyle uğraşmadan parametre olarak parola geçebilme kolaylığı.
+- **Sessiz Tekil Örnek Koruması (Single-Instance Mutex)**: Aynı ID ile çalışan bir agent zaten varsa, ikinci kez açıldığında hiçbir hata veya pencere açmadan kendini anında sessizce kapatır (`ExitCode 0`). Çakışma ve çoklu kopya oluşmasını %100 engeller.
 
 ---
 
@@ -136,6 +137,9 @@ Agent'ın arka planda çalıştığını doğrulamak için:
 Get-Process -Name homeproxy
 ```
 *(Görev Yöneticisi ➡️ Ayrıntılar sekmesinde `homeproxy.exe` olarak görünür).*
+
+> **💡 Akıllı Tekil Örnek Koruması (Mutex):**  
+> Bilgisayarınızda `homeproxy.exe` zaten arka planda çalışıyorsa; ister başlangıç scripti ister siz manuel olarak tekrar başlatsanız dahi ikinci kopya **hiçbir uyarı vermeden kendini sessizce anında kapatır (`ExitCode 0`)**. Sistemde daima tek ve kararlı bir agent kalır.
 
 ---
 
