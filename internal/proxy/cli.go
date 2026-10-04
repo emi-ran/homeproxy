@@ -1,8 +1,7 @@
-package main
+package proxy
 
 import (
 	"context"
-	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -19,55 +18,12 @@ import (
 	"time"
 )
 
-type manageRequest struct{ Token, ID string }
-
-func (s *server) listenManagement(ctx context.Context, path string) error {
-	if !strings.HasPrefix(path, "/") {
-		return errors.New("absolute management socket path required")
-	}
-	l, e := net.Listen("unix", path)
-	if e != nil {
-		return e
-	}
-	if e = os.Chmod(path, 0600); e != nil {
-		l.Close()
-		return e
-	}
-	go func() { <-ctx.Done(); l.Close() }()
-	go func() { // Sequential, bounded requests: local control only.
-		for {
-			c, e := l.Accept()
-			if e != nil {
-				return
-			}
-			c.SetDeadline(time.Now().Add(2 * time.Second))
-			var r manageRequest
-			e = json.NewDecoder(io.LimitReader(c, 1024)).Decode(&r)
-			if e == nil && subtle.ConstantTimeCompare([]byte(r.Token), []byte(s.token)) == 1 {
-				e = s.selectAgent(r.ID)
-			} else {
-				e = errors.New("unauthorized")
-			}
-			if e == nil {
-				io.WriteString(c, "ok\n")
-			} else {
-				io.WriteString(c, "rejected\n")
-			}
-			c.Close()
-		}
-	}()
-	return nil
-}
-func main() {
-	if e := cli(); e != nil {
-		log.Fatal(e)
-	}
-}
-func cli() error {
-	if len(os.Args) < 2 {
+// RunCLI executes the HomeProxy command line interface.
+func RunCLI(args []string) error {
+	if len(args) < 1 {
 		return errors.New("use server, agent, select")
 	}
-	role := os.Args[1]
+	role := args[0]
 	f := flag.NewFlagSet(role, flag.ContinueOnError)
 	addr := f.String("quic", "127.0.0.1:4433", "QUIC server address")
 	socks := f.String("socks", "127.0.0.1:1080", "private SOCKS bind")
@@ -81,7 +37,7 @@ func cli() error {
 	mode := f.String("mode", "priority", "priority, automatic, manual")
 	admin := f.String("admin-socket", "/run/homeproxy/admin.sock", "local Unix management socket")
 	allow := f.Bool("allow-private", false, "DANGER: permit agent private destinations; test fixtures only")
-	if e := f.Parse(os.Args[2:]); e != nil {
+	if e := f.Parse(args[1:]); e != nil {
 		return e
 	}
 	token := os.Getenv("HOMEPROXY_TOKEN")

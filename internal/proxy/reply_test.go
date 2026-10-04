@@ -1,15 +1,16 @@
-package main
+package proxy
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/quic-go/quic-go"
 	"io"
 	"net"
 	"testing"
 	"time"
+
+	"github.com/quic-go/quic-go"
 )
 
 func expectFailureReply(t *testing.T, c net.Conn, code byte) {

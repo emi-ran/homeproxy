@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"bytes"
@@ -33,6 +33,7 @@ func sendDatagram(c *quic.Conn, id uint64, b []byte) {
 		log.Print("QUIC datagram dropped")
 	}
 }
+
 func parsePacket(b []byte) (string, []byte, error) {
 	if len(b) < 4 || b[0] != 0 || b[1] != 0 || b[2] != 0 {
 		return "", nil, io.ErrUnexpectedEOF
@@ -41,6 +42,7 @@ func parsePacket(b []byte) (string, []byte, error) {
 	a, e := readAddress(r)
 	return a, b[len(b)-r.Len():], e
 }
+
 func (s *server) receiveDatagrams(p *agentPeer) {
 	for {
 		b, e := p.conn.ReceiveDatagram(p.conn.Context())
@@ -59,6 +61,7 @@ func (s *server) receiveDatagrams(p *agentPeer) {
 		}
 	}
 }
+
 func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr string) {
 	replied := false
 	failure := byte(1)
@@ -201,6 +204,7 @@ func agentDatagrams(c *quic.Conn) {
 		}
 	}
 }
+
 func agentUDP(c *quic.Conn, q *quic.Stream, allow bool) {
 	agentUDPTimeouts(c, q, allow, 60*time.Second, time.Hour)
 }

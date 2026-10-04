@@ -1,4 +1,4 @@
-package main
+package proxy
 
 import (
 	"bytes"
@@ -19,7 +19,16 @@ import (
 func testTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	t.Helper()
 	k, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	tmpl := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true}
+	tmpl := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "localhost"},
+		DNSNames:              []string{"localhost"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
 	der, e := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &k.PublicKey, k)
 	if e != nil {
 		t.Fatal(e)
@@ -27,8 +36,16 @@ func testTLS(t *testing.T) (*tls.Config, *tls.Config) {
 	cert, _ := x509.ParseCertificate(der)
 	pool := x509.NewCertPool()
 	pool.AddCert(cert)
-	return &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: k}}, NextProtos: []string{"homeproxy/1"}}, &tls.Config{RootCAs: pool, ServerName: "localhost", NextProtos: []string{"homeproxy/1"}}
+	return &tls.Config{
+			Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: k}},
+			NextProtos:   []string{"homeproxy/1"},
+		}, &tls.Config{
+			RootCAs:    pool,
+			ServerName: "localhost",
+			NextProtos: []string{"homeproxy/1"},
+		}
 }
+
 func waitAgents(t *testing.T, s *server, n int) {
 	t.Helper()
 	until := time.Now().Add(3 * time.Second)
@@ -43,6 +60,7 @@ func waitAgents(t *testing.T, s *server, n int) {
 	}
 	t.Fatal("agent count timeout")
 }
+
 func socks(t *testing.T, addr string, cmd byte, target string) net.Conn {
 	t.Helper()
 	c, e := net.Dial("tcp", addr)
@@ -62,6 +80,7 @@ func socks(t *testing.T, addr string, cmd byte, target string) net.Conn {
 	c.Write(append([]byte{5, cmd, 0}, a...))
 	return c
 }
+
 func reply(t *testing.T, c net.Conn) string {
 	t.Helper()
 	b := make([]byte, 3)
@@ -77,6 +96,7 @@ func reply(t *testing.T, c net.Conn) string {
 	}
 	return a
 }
+
 func TestUDPAssociation(t *testing.T) {
 	st, ct := testTLS(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -141,6 +161,7 @@ func TestUDPAssociation(t *testing.T) {
 		t.Fatal("closed association accepted")
 	}
 }
+
 func TestTwoAgentsUDPIsolationFailover(t *testing.T) {
 	st, ct := testTLS(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -202,6 +223,7 @@ func TestTwoAgentsUDPIsolationFailover(t *testing.T) {
 	r3, _ := net.ResolveUDPAddr("udp", reply(t, c3))
 	check(u1, r3, 4)
 }
+
 func TestTwoAgentsPinnedFailover(t *testing.T) {
 	st, ct := testTLS(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -264,6 +286,7 @@ func TestTwoAgentsPinnedFailover(t *testing.T) {
 		t.Fatal("fallback failed", e)
 	}
 }
+
 func TestAddressAndDestinationPolicy(t *testing.T) {
 	for _, addr := range []string{"127.0.0.1:1234", "[::1]:1234", "localhost:1234"} {
 		b, e := encodeAddress(addr)
@@ -287,6 +310,7 @@ func TestAddressAndDestinationPolicy(t *testing.T) {
 		t.Fatal("invalid type")
 	}
 }
+
 func TestUntrustedTLS(t *testing.T) {
 	st, _ := testTLS(t)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -299,6 +323,7 @@ func TestUntrustedTLS(t *testing.T) {
 	}
 	waitAgents(t, s, 0)
 }
+
 func TestTLSAuthTCPHalfClose(t *testing.T) {
 	st, ct := testTLS(t)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -1,6 +1,6 @@
 //go:build !windows
 
-package main
+package proxy
 
 import (
 	"os"
@@ -12,8 +12,7 @@ import (
 
 func TestSIGTERMShutdown(t *testing.T) {
 	if os.Getenv("HOMEPROXY_SIGNAL_HELPER") == "1" {
-		os.Args = []string{"homeproxy", "agent", "-id", "test", "-server-name", "localhost"}
-		if err := cli(); err != nil {
+		if err := RunCLI([]string{"agent", "-id", "test", "-server-name", "localhost"}); err != nil {
 			t.Fatal(err)
 		}
 		return

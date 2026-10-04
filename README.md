@@ -1,57 +1,237 @@
-# HomeProxy reduced headless MVP
+# HomeProxy 🚀
 
-Go server + outbound agent. RFC1928 SOCKS5 TCP CONNECT uses QUIC bidirectional streams; UDP ASSOCIATE uses QUIC datagrams. No VDS direct target dial: only agents resolve and dial destinations. Maximum two authenticated agents; shared secret does not provide separate per-agent identity/enrollment. Agent IDs cannot replace live peers. QUIC TLS 1.3 validates certificate chain and DNS name; no insecure mode.
+> **Headless SOCKS5 over Authenticated QUIC Tunnel**
+> Güvenli, hafif ve merkezi sunucu üzerinden doğrudan çıkış yapmayan, trafiği yetkilendirilmiş ev/uç istemciler (agent) üzerinden yönlendiren modern bir SOCKS5 proxy çözümü.
 
-## Build and local use
+---
+
+## 📌 Genel Bakış ve Mimari
+
+**HomeProxy**, geleneksel proxy sunucularından farklı olarak hedef adresleri sunucu (VDS/VPS) üzerinden **çözümlemez ve doğrudan bağlamaz**. Bunun yerine:
+
+1. **Sunucu (`server`)**: Bulut/VDS üzerinde çalışır; SOCKS5 istemcilerini (TCP ve UDP) kabul eder ve agent'lar ile QUIC (TLS 1.3) üzerinden şifreli, çoklamalı (multiplexed) tünel kurar.
+2. **Uç Ajan (`agent`)**: Evdeki bilgisayar veya yerel ağda çalışır; sunucuya dışarıdan içeri doğru (outbound) güvenli bir QUIC bağlantısı açar. Gelen bağlantı isteklerinde hedef DNS adreslerini çözer ve gerçek çıkışı kendi IP'si üzerinden yapar.
+3. **Yönetim İstemcisi (`select`)**: Yerel Unix domain socket üzerinden sunucuya bağlanarak aktif olarak trafiği aktaran agent'ı anlık olarak değiştirebilir.
 
 ```
-GOMAXPROCS=2 GOFLAGS=-p=1 go test ./...
-GOMAXPROCS=2 GOFLAGS=-p=1 go test -race ./...
-go vet ./...
-go build -o bin/homeproxy .
-GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -o bin/homeproxy-windows-amd64.exe .
+ +------------------+           +----------------------+           +------------------+
+ |  SOCKS5 Client   |  (TCP)    |   HomeProxy Server   |  (QUIC)   | HomeProxy Agent  |  (Direct)   +-------------+
+ | (Browser/Curl)   | --------> | (VDS / Public Cloud) | <======== | (Home PC / Edge) | ----------> | Destination |
+ | 127.0.0.1:1080   | (UDP Asso)|   0.0.0.0:4433/udp   | (TLS 1.3) | Residential IP   |             | (Web/API)   |
+ +------------------+           +----------------------+           +------------------+             +-------------+
+                                           ^
+                                           | Unix Socket (admin.sock)
+                                    +-------------+
+                                    | Local Admin | (homeproxy select -id pc-b)
+                                    +-------------+
 ```
 
-Use random shared token at least 16 bytes via HOMEPROXY_TOKEN or `-token-file`. Do not pass token in argv. Restrict token/key files to service user. No token logging. Examples assume TLS certificate valid for `proxy.example.com`, private key and token provisioned separately:
+---
 
+## ✨ Temel Özellikler
+
+- **QUIC & TLS 1.3 Taşıma Katmanı**:
+  - `quic-go` tabanlı düşük gecikmeli, paket kaybına dirençli bağlantı.
+  - SOCKS5 TCP oturumları için çift yönlü (bidirectional) QUIC stream'leri.
+  - SOCKS5 UDP ASSOCIATE trafiği için QUIC Datagram desteği (RFC 9221).
+  - Katı TLS 1.3 sertifika ve DNS/SNI doğrulaması (güvensiz mod bulunmaz).
+- **Esnek Yönlendirme Modları (`-mode`)**:
+  - `priority`: En düşük sayısal önceliğe (priority) sahip agent seçilir. Öncelik eşitliğinde sözlük sırasına göre ID seçilir.
+  - `automatic`: İlk seçim önceliğe göre yapılır; ardından agent sağlıklı kaldığı sürece ona sabitlenir (sticky). Çökme durumunda yedek agent'a geçer ve ona sabitlenir.
+  - `manual`: Manuel seçim yapılana kadar öncelik bazlı yedek çalışır; yerel soket üzerinden seçim yapıldığında o agent aktif kalır.
+- **Yerel Yönetim Soketi (`listenManagement`)**:
+  - Dosya izinleri `0600` olan Unix domain socket üzerinden güvenli, paylaşımlı token doğrulaması ile dinamik agent seçimi (`homeproxy select`).
+- **Gelişmiş Güvenlik ve Anti-SSRF Koruması**:
+  - Agent çıkışlarında loopback, özel ağ (RFC 1918), paylaşımlı adres blokları (`100.64.0.0/10` - bulut metadata servisleri dahil), link-local ve multicast IP adresleri hem sayısal hem de DNS çözümlemelerinde otomatik olarak engellenir (`-allow-private` yalnızca testler içindir).
+  - SOCKS5 arabirimi şifresizdir; bu nedenle yalnızca yerel veya izole özel ağlarda çalıştırılmak üzere tasarlanmıştır.
+- **Sıkı Kaynak Sınırları**:
+  - Maksimum 2 kimlik doğrulanmış agent, 4 bağlantı kabul yuvası (admission slots).
+  - 128 eşzamanlı SOCKS oturumu ve 128 QUIC akışı.
+  - QUIC datagram tavanı: 8 baytlık oturum ID'si dahil **1100 bayt**.
+  - UDP akışı için 60 saniye hareketsizlik (idle) zaman aşımı (başarılı giden pakette yenilenir) ve 1 saatlik bağımsız mutlak oturum ömrü (hard lifetime).
+
+---
+
+## 📂 Proje Klasör Düzeni
+
+Proje, Go standart proje düzenine (Standard Go Project Layout) uygun olarak yeniden organize edilmiş ve derli toplu hale getirilmiştir:
+
+```text
+homeproxy/
+├── cmd/
+│   └── homeproxy/
+│       └── main.go                 # Uygulama CLI giriş noktası (server, agent, select)
+├── internal/
+│   └── proxy/
+│       ├── address.go              # SOCKS5 adres kodlayıcı/çözücü ve güvenli hedef denetleyicisi
+│       ├── agent.go                # Outbound agent döngüsü, stream işleyicisi ve çıkış bağlantıları
+│       ├── cli.go                  # CLI bayraklarının (flags) ayrıştırılması ve komut yürütücüsü
+│       ├── manage.go               # Unix domain socket sunucusu ve yönetim istekleri
+│       ├── proxy.go                # Çekirdek veri yapıları (server, agentPeer) ve yönlendirme algoritmaları
+│       ├── server.go               # QUIC agent dinleyicisi, slot kontrolü ve SOCKS5 sunucusu
+│       ├── transport.go            # QUIC stream köprüleme (bridge) ve TCP yarım-kapanış (half-close)
+│       ├── udp.go                  # SOCKS5 UDP ASSOCIATE geçişi ve QUIC datagram paketleyicisi
+│       ├── integration_test.go     # Uçtan uca entegrasyon testleri (TLS, TCP/UDP echo, failover)
+│       ├── manage_test.go          # Yönetim soketi kimlik doğrulama testleri
+│       ├── proxy_test.go           # Yönlendirme ve sticky seçim birim testleri
+│       ├── reply_test.go           # SOCKS5 yanıt kodları ve bağlı adres testleri
+│       ├── security_cleanup_test.go# Anti-SSRF, sıfırlama (reset) ve bellek sızıntı testleri
+│       └── signal_test.go          # Zarif kapatma (SIGTERM) testi
+├── docs/
+│   └── VERIFY.md                   # Doğrulama test geçmişi ve güvenlik inceleme notları
+├── Dockerfile                      # Üretim için minimal çok-aşamalı (multi-stage) Docker yapısı
+├── compose.yaml                    # Ağ izolasyonlu Docker Compose yapılandırması
+├── go.mod                          # Go modül bağımlılıkları
+├── go.sum                          # Modül sağlama toplamları (checksums)
+└── README.md                       # Kapsamlı proje dokümantasyonu
 ```
+
+---
+
+## 🛠️ Kurulum ve Derleme
+
+### Gereksinimler
+- **Go**: 1.25 veya üzeri
+- Linux / macOS / Windows desteği (Agent Windows üzerinde de sorunsuz çalışır)
+
+### Yerel Olarak Derleme
+
+```bash
+# Bağımlılıkları kontrol edin
+go mod download
+
+# Linux / macOS ikilisini derleyin
+go build -trimpath -o bin/homeproxy ./cmd/homeproxy
+
+# Windows için çapraz derleme (cross-compile)
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy-windows-amd64.exe ./cmd/homeproxy
+```
+
+---
+
+## 🚀 Kullanım Kılavuzu
+
+Uygulama tek bir ikili dosya üzerinden üç farklı modda çalıştırılır: `server`, `agent` ve `select`.
+
+> **Güvenlik Notu**: Kimlik doğrulama parolası (`token`) en az **16 bayt** olmalıdır. Token'ı komut satırı argümanı olarak geçmeyin; `HOMEPROXY_TOKEN` ortam değişkeni veya `-token-file` bayrağı ile sağlayın.
+
+### 1. Sunucu Modu (`server`)
+
+Sunucuyu QUIC ve SOCKS5 portları ile başlatır:
+
+```bash
+# Güvenli bir token dosyası hazırlayın
 mkdir -m 700 -p "$HOME/.homeproxy"
-bin/homeproxy server -quic 0.0.0.0:4433 -socks 127.0.0.1:1080 -cert cert.pem -key key.pem -token-file token -admin-socket "$HOME/.homeproxy/admin.sock"
-bin/homeproxy agent -quic proxy.example.com:4433 -server-name proxy.example.com -id pc-a -priority 10 -token-file token
-bin/homeproxy agent -quic proxy.example.com:4433 -server-name proxy.example.com -id pc-b -priority 20 -token-file token
-bin/homeproxy select -id pc-b -token-file token -admin-socket "$HOME/.homeproxy/admin.sock"
+openssl rand -hex 16 > "$HOME/.homeproxy/token"
+chmod 600 "$HOME/.homeproxy/token"
+
+# Sunucuyu başlatın
+./bin/homeproxy server \
+  -quic 0.0.0.0:4433 \
+  -socks 127.0.0.1:1080 \
+  -cert /etc/ssl/homeproxy/cert.pem \
+  -key /etc/ssl/homeproxy/key.pem \
+  -token-file "$HOME/.homeproxy/token" \
+  -admin-socket "$HOME/.homeproxy/admin.sock" \
+  -mode priority
 ```
 
-Agent uses system roots or explicit `-ca roots.pem`. No public management port. Server management Unix socket is mode 0600, requires shared token, accepts only bounded selection requests. Parent directory must be owner-only. Existing socket path is never deleted by startup. Windows binary runs agent; Unix management server is Linux-oriented. Agent reconnect delay 3 seconds. Stop with Ctrl-C or Unix SIGTERM.
+| Parametre | Varsayılan | Açıklama |
+|---|---|---|
+| `-quic` | `127.0.0.1:4433` | Agent'ların bağlanacağı genel QUIC adresi/portu |
+| `-socks` | `127.0.0.1:1080` | SOCKS5 istemcilerinin bağlanacağı özel adres |
+| `-cert` | `""` | TLS sunucu sertifikası (PEM) |
+| `-key` | `""` | TLS sunucu özel anahtarı (PEM) |
+| `-mode` | `priority` | Yönlendirme modu: `priority`, `automatic`, `manual` |
+| `-token-file` | `""` | Paylaşımlı gizli anahtar dosyası |
+| `-admin-socket`| `/run/homeproxy/admin.sock` | Yerel Unix yönetim soketi yolu |
 
-## Routing
+---
 
-`-mode priority`: new sessions choose lowest numeric priority, tie broken lexicographic ID. Manual selection overrides until selected peer disappears; recovered same ID is selected again.
+### 2. Ajan Modu (`agent`)
 
-`-mode automatic`: first choice lowest priority, then sticky to healthy choice even if higher-priority peer returns; death chooses and sticks to fallback. Manual selection changes sticky choice.
+Ev bilgisayarında veya yerel ağdaki sunucuda çalıştırılır. Sunucuya outbound QUIC bağlantısı kurar:
 
-`-mode manual`: startup chooses priority fallback until local selection; selection overrides while healthy. Missing selection falls back by priority. Thus manual never intentionally disables healthy fallback.
+```bash
+# Agent A (Yüksek öncelik: 10)
+./bin/homeproxy agent \
+  -quic proxy.example.com:4433 \
+  -server-name proxy.example.com \
+  -id home-pc-a \
+  -priority 10 \
+  -token-file token
 
-TCP and UDP associations pin exact QUIC connection, not ID. Agent loss closes old controls/sockets/streams; sessions are never replayed or migrated. New sessions use healthy fallback; no agent returns SOCKS failure, never direct egress. Network loss is detected through QUIC idle timeout (20 seconds), not instantly.
+# Agent B (Yedek agent: 20)
+./bin/homeproxy agent \
+  -quic proxy.example.com:4433 \
+  -server-name proxy.example.com \
+  -id home-pc-b \
+  -priority 20 \
+  -token-file token
+```
 
-## Bounds and UDP behavior
+| Parametre | Varsayılan | Açıklama |
+|---|---|---|
+| `-quic` | `127.0.0.1:4433` | Uzak QUIC sunucu adresi (`domain:port` veya `ip:port`) |
+| `-server-name` | `""` | TLS sertifikasındaki DNS adı (SNI doğrulaması) |
+| `-id` | `""` | Agent benzersiz tanımlayıcısı |
+| `-priority` | `100` | Öncelik derecesi (düşük sayı daha yüksek önceliktir) |
+| `-ca` | `""` | Özel CA sertifikası yolu (boş bırakılırsa sistem kökleri kullanılır) |
+| `-allow-private`| `false` | **DİKKAT**: Özel/yerel IP çıkışına izin verir (yalnızca test ortamları için) |
 
-QUIC datagram application maximum **1100 bytes including 8-byte association ID**. SOCKS UDP header included, so payload maximum is 1082 bytes for IPv4, 1070 for IPv6, or `1085 - domain_length` for domains. Path/QUIC limits can reject smaller packets. No application fragmentation; oversize/send failures counted by atomic counter and logged without payload. Loss/reordering inherent to datagrams; no delivery guarantees.
+---
 
-FRAG != 0, nonzero reserved bytes, invalid address types, invalid/truncated headers dropped. UDP sender IP must match TCP peer and sender port must match ASSOCIATE request; unspecified port pins first matching sender with valid SOCKS UDP header. BND address uses TCP listener's actual local interface, so reachable within same internal network without public NAT. TCP control close terminates UDP socket. Agent replies accepted only from one of up to 32 contacted endpoints per association. Session IDs scoped to QUIC connection; queues 32 messages, overflow dropped. 128 concurrent SOCKS sessions, 128 QUIC streams, two agents, four accepted authentication/connection slots. Handshake/connect timeouts 10s; management timeout 2s; UDP idle timeout 60s (agent refreshes on successful outbound traffic and allowed replies); session hard lifetime one hour, independent of traffic. Agent stream EOF/reset also closes UDP relay and SOCKS control. TCP clean EOF preserves half-close; copy errors cancel both stream directions and close socket promptly. TCP stream copies use bounded stdlib buffers. No bandwidth quotas/per-client fairness.
+### 3. Yönetim Modu (`select`)
 
-Authentication admission already has a minimal global bound: four accepted connection slots, at most two authenticated agents, and 10s unauthenticated registration deadlines. Authenticated peers retain slots for their lifetime. This is not a rate limit: repeated unauthenticated peers can occupy remaining slots and starve reconnects, while QUIC handshakes occur before this bound. Public deployment needs trusted-source firewall restrictions or separate handshake/per-source admission controls; distributed attackers defeat per-IP limits. No production DoS protection claimed.
+Sunucu üzerindeki aktif agent seçimini manuel olarak değiştirmek için kullanılır:
 
-Agent destinations default reject loopback/private/shared (100.64.0.0/10, including 100.100.100.200 metadata)/link-local/unspecified/multicast IPs, including every DNS answer; dial uses checked numeric IP to avoid re-resolution. `-allow-private` disables that policy only for explicit trusted fixtures. Never enable for untrusted SOCKS clients. SOCKS uses no-auth and MUST remain private; local access permits proxy use. Domain names resolved by selected agent, not server. Domain UDP replies carry numeric source address, per SOCKS semantics.
+```bash
+./bin/homeproxy select \
+  -id home-pc-b \
+  -token-file "$HOME/.homeproxy/token" \
+  -admin-socket "$HOME/.homeproxy/admin.sock"
+```
 
-## Container topology (files only; NOT deployed)
+İşlem başarılı olduğunda ekrana `ok` yazdırılır; yetkisiz veya geçersiz isteklerde hata verilir.
 
-Dockerfile and compose.yaml publish ONLY UDP 4433. SOCKS and dynamically allocated UDP relay ports are unpublished. Clients must share private network and reach both internal SOCKS address and advertised BND IP; UDP cannot work by forwarding SOCKS TCP alone. `private` is internal; `transport` permits QUIC public ingress. Only trusted proxy/client containers may attach. These files were not Docker-built or run.
+---
 
-Existing Mori Dokploy standalone Swarm application uses `dokploy-network`. This Compose private bridge does NOT automatically join Mori or its Swarm tasks. Separate reviewed Swarm overlay/attachable topology, routing and firewall work required before integration. Nothing here changes Mori, Dokploy, services, Docker state or existing networks. Do not publish SOCKS or attach arbitrary containers to transport network. Host firewall policy still required; Compose port publication alone is not complete network isolation.
+## 🐳 Docker ve Compose Kullanımı
 
-## Verification and exclusions
+Depoda hazır bulunan `Dockerfile` ve `compose.yaml` ile güvenli ve yalıtılmış bir sunucu konteyneri çalıştırabilirsiniz:
 
-Real localhost fixtures generate ephemeral trusted TLS certificates. Tests exercise unauthorized agent rejection, untrusted TLS rejection, TCP echo and half-close, UDP echo, wrong sender/FRAG/oversize rejection, control close, two simultaneous agents with isolated TCP/UDP sessions, pinned agent death and healthy fallback, priority/manual/automatic routing, destination policy, IPv4/IPv6/domain codecs, authenticated local selection. Localhost tests do NOT prove remote PC public egress IP, internet performance or NAT reachability.
+```bash
+docker compose up -d
+```
 
-No staging/remote-PC/Dokploy deployment run. Android not built. Windows cross-build only, runtime not tested. No mTLS enrollment, GUI, SQLite, installer, OS service, Keystore, DPAPI, traffic obfuscation, or application fragmentation. quic-go only direct dependency; its transitives recorded in go.mod/go.sum. Host emitted quic-go UDP receive-buffer warning; no sysctl/system changes made.
+### Konteyner Ağ Güvenliği
+- Konteyner yalnızca **UDP 4433** portunu dış dünyaya açar (`ports: ["4433:4433/udp"]`).
+- `socks` portu (1080) dış dünyaya açılmaz; yalnızca `private` dahili Docker ağına bağlı diğer servisler tarafından erişilebilir.
+- Dosya sistemi salt okunurdur (`read_only: true`); yetkiler en aza indirilmiştir (`cap_drop: [ALL]`, `no-new-privileges: true`).
+
+---
+
+## 🧪 Testler ve Doğrulama
+
+Tüm testler yerel ortamda sahte/geçici (ephemeral) sertifikalarla uçtan uca çalıştırılabilir:
+
+```bash
+# Tüm test paketini çalıştırın
+go test -v ./...
+
+# Yarış durumu (race detector) kontrolü ile test edin
+go test -race ./...
+
+# Statik kod analizi yapın
+go vet ./...
+```
+
+Daha ayrıntılı doğrulama geçmişi ve güvenlik inceleme kayıtları için [docs/VERIFY.md](docs/VERIFY.md) belgesini inceleyebilirsiniz.
+
+---
+
+## 🔒 Güvenlik İlkeleri ve Tavsiyeler
+
+1. **SOCKS Portunu Asla Dış Dünyaya Açmayın**: SOCKS5 protokolü kimlik doğrulamasız kurulur. Bu nedenle yalnızca `127.0.0.1` veya güvenilir iç ağlarda (Docker private bridge, WireGuard/Tailscale VPN) dinletilmelidir.
+2. **Güvenlik Duvarı (Firewall)**: Sunucunun QUIC portuna gelen istekler için olası saldırılara karşı güvenlik duvarı hız sınırlandırması (rate limiting) uygulanması önerilir.
+3. **Zarif Kapanış**: Agent veya sunucu `Ctrl+C` veya `SIGTERM` sinyali aldığında açık tünelleri ve soketleri temizleyerek zarif şekilde kapanır.

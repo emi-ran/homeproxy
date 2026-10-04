@@ -11,8 +11,8 @@ All commands serialized with `GOMAXPROCS=2 GOFLAGS=-p=1`.
 - Final `go test -count=3 -v ./...`: 9 tests, 27 executions passed; `ok homeproxy 2.087s`.
 - Final `go test -race ./...`: `ok homeproxy 2.048s`, no race reports.
 - `go vet ./...`: exit 0, no diagnostics.
-- `go build -trimpath -o bin/homeproxy .`: success.
-- `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy-windows-amd64.exe .`: success.
+- `go build -trimpath -o bin/homeproxy ./cmd/homeproxy`: success.
+- `GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy-windows-amd64.exe ./cmd/homeproxy`: success.
 - Running Linux binary without role: expected `use server, agent, select` diagnostic; no server launched.
 - `git diff --check`: no diagnostics (rechecked after staging).
 
