@@ -60,12 +60,30 @@ func (s *server) receiveDatagrams(p *agentPeer) {
 	}
 }
 func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr string) {
-	source, e := net.ResolveUDPAddr("udp", addr)
+	replied := false
+	failure := byte(1)
+	defer func() {
+		if !replied {
+			socksFailure(c, failure)
+		}
+	}()
+	ac, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	host, port, e := net.SplitHostPort(addr)
+	if e != nil {
+		return
+	}
+	ips, e := net.DefaultResolver.LookupIPAddr(ac, host)
+	if e != nil || len(ips) == 0 {
+		return
+	}
+	source, e := net.ResolveUDPAddr("udp", net.JoinHostPort(ips[0].IP.String(), port))
 	if e != nil {
 		return
 	}
 	remote := c.RemoteAddr().(*net.TCPAddr)
 	if !source.IP.IsUnspecified() && !source.IP.Equal(remote.IP) {
+		failure = 2
 		return
 	}
 	source.IP = remote.IP
@@ -75,16 +93,17 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 		return
 	}
 	defer u.Close()
-	ac, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
 	q, e := p.conn.OpenStreamSync(ac)
 	if e != nil {
 		return
 	}
 	defer q.Close()
 	defer q.CancelRead(0)
-	q.SetDeadline(time.Now().Add(timeout))
-	q.Write([]byte{3})
+	deadline, _ := ac.Deadline()
+	q.SetDeadline(deadline)
+	if _, e = q.Write([]byte{3}); e != nil {
+		return
+	}
 	b := []byte{1}
 	if _, e = io.ReadFull(q, b); e != nil || b[0] != 0 {
 		return
@@ -95,6 +114,7 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 	p.udp.Store(id, queue)
 	defer p.udp.Delete(id)
 	a, _ := encodeAddress(u.LocalAddr().String())
+	replied = true
 	if _, e = c.Write(append([]byte{5, 0, 0}, a...)); e != nil {
 		return
 	}

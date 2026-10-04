@@ -20,6 +20,13 @@ import (
 const timeout = 10 * time.Second
 const maxSessions = 128
 
+var errAddressType = errors.New("address type")
+
+func socksFailure(c net.Conn, code byte) {
+	c.SetWriteDeadline(time.Now().Add(timeout))
+	c.Write([]byte{5, code, 0, 1, 0, 0, 0, 0, 0, 0})
+}
+
 var qc = &quic.Config{EnableDatagrams: true, MaxIdleTimeout: 20 * time.Second, KeepAlivePeriod: 5 * time.Second, MaxIncomingStreams: 128, MaxIncomingUniStreams: -1}
 
 type hello struct {
@@ -73,7 +80,7 @@ func readAddress(r io.Reader) (string, error) {
 			return "", errors.New("host")
 		}
 	default:
-		return "", errors.New("address type")
+		return "", errAddressType
 	}
 	b = make([]byte, n+2)
 	if _, e := io.ReadFull(r, b); e != nil {
@@ -261,7 +268,19 @@ func agentSession(c *quic.Conn, q *quic.Stream, allow bool) {
 		q.CancelRead(1)
 		return
 	}
-	q.Write([]byte{0})
+	a, e := encodeAddress(dst.LocalAddr().String())
+	if e != nil {
+		dst.Close()
+		q.Close()
+		q.CancelRead(1)
+		return
+	}
+	if _, e = q.Write(append([]byte{0}, a...)); e != nil {
+		dst.Close()
+		q.Close()
+		q.CancelRead(1)
+		return
+	}
 	q.SetDeadline(time.Time{})
 	done := make(chan struct{})
 	go func() {
@@ -323,6 +342,9 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 	}
 	addr, e := readAddress(c)
 	if e != nil {
+		if errors.Is(e, errAddressType) {
+			socksFailure(c, 8)
+		}
 		return
 	}
 	p := s.choose()
@@ -338,6 +360,13 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 		c.Write([]byte{5, 7, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
+	replied := false
+	failure := byte(1)
+	defer func() {
+		if !replied {
+			socksFailure(c, failure)
+		}
+	}()
 	oc, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	q, e := p.conn.OpenStreamSync(oc)
@@ -345,19 +374,33 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 		return
 	}
 	defer q.CancelRead(0)
-	q.SetDeadline(time.Now().Add(timeout))
+	defer q.Close()
+	deadline, _ := oc.Deadline()
+	q.SetDeadline(deadline)
 	a, _ := encodeAddress(addr)
-	q.Write(append([]byte{1}, a...))
+	if _, e = q.Write(append([]byte{1}, a...)); e != nil {
+		return
+	}
 	status := []byte{1}
 	if _, e = io.ReadFull(q, status); e != nil {
 		return
 	}
 	if status[0] != 0 {
-		c.Write([]byte{5, 2, 0, 1, 0, 0, 0, 0, 0, 0})
-		q.Close()
+		failure = 2
 		return
 	}
-	c.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+	bound, e := readAddress(q)
+	if e != nil {
+		return
+	}
+	a, e = encodeAddress(bound)
+	if e != nil {
+		return
+	}
+	replied = true
+	if _, e = c.Write(append([]byte{5, 0, 0}, a...)); e != nil {
+		return
+	}
 	q.SetDeadline(time.Time{})
 	c.SetDeadline(time.Time{})
 	done := make(chan struct{})
