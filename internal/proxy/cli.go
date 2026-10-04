@@ -37,6 +37,7 @@ func RunCLI(args []string) error {
 	mode := f.String("mode", "priority", "priority, automatic, manual")
 	admin := f.String("admin-socket", "/run/homeproxy/admin.sock", "local Unix management socket")
 	allow := f.Bool("allow-private", false, "DANGER: permit agent private destinations; test fixtures only")
+	insecure := f.Bool("insecure", false, "skip TLS certificate verification on agent (for self-signed server cert)")
 	if e := f.Parse(args[1:]); e != nil {
 		return e
 	}
@@ -70,10 +71,13 @@ func RunCLI(args []string) error {
 				if e != nil {
 					return fmt.Errorf("invalid HOMEPROXY_CERT/HOMEPROXY_KEY: %w", e)
 				}
-			} else if certErr != nil {
-				return certErr
 			} else {
-				return errors.New("server requires -cert and -key files (or HOMEPROXY_CERT and HOMEPROXY_KEY env vars)")
+				var e error
+				pair, e = generateSelfSignedCert()
+				if e != nil {
+					return fmt.Errorf("failed to generate self-signed certificate: %w", e)
+				}
+				log.Print("zero-config: generated self-signed TLS 1.3 certificate")
 			}
 		}
 		s := newServer(token, *mode)
@@ -90,10 +94,19 @@ func RunCLI(args []string) error {
 		<-ctx.Done()
 		return nil
 	case "agent":
-		if *id == "" || *name == "" {
+		if *id == "" || (*name == "" && !*insecure) {
 			return errors.New("id and server-name required")
 		}
-		t := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: *name, NextProtos: []string{"homeproxy/1"}}
+		serverName := *name
+		if serverName == "" {
+			serverName = "homeproxy"
+		}
+		t := &tls.Config{
+			MinVersion:         tls.VersionTLS13,
+			ServerName:         serverName,
+			NextProtos:         []string{"homeproxy/1"},
+			InsecureSkipVerify: *insecure,
+		}
 		if *ca != "" {
 			b, e := os.ReadFile(*ca)
 			if e != nil {

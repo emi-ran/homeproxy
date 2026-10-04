@@ -120,12 +120,11 @@ Uygulama tek bir ikili dosya üzerinden üç farklı modda çalıştırılır: `
 Sunucuyu QUIC ve SOCKS5 portları ile başlatır:
 
 ```bash
-# Güvenli bir token dosyası hazırlayın
-mkdir -m 700 -p "$HOME/.homeproxy"
-openssl rand -hex 16 > "$HOME/.homeproxy/token"
-chmod 600 "$HOME/.homeproxy/token"
+# Hızlı / Sıfır Yapılandırma (Zero-Config) - Sertifika gerekmez!
+export HOMEPROXY_TOKEN="REPLACE_WITH_A_STRONG_RANDOM_TOKEN"
+./bin/homeproxy server -quic 0.0.0.0:4433 -socks 127.0.0.1:1080
 
-# Sunucuyu başlatın
+# Veya Özel Sertifika ile Başlatma:
 ./bin/homeproxy server \
   -quic 0.0.0.0:4433 \
   -socks 127.0.0.1:1080 \
@@ -140,8 +139,8 @@ chmod 600 "$HOME/.homeproxy/token"
 |---|---|---|
 | `-quic` | `127.0.0.1:4433` | Agent'ların bağlanacağı genel QUIC adresi/portu |
 | `-socks` | `127.0.0.1:1080` | SOCKS5 istemcilerinin bağlanacağı özel adres |
-| `-cert` | `""` | TLS sunucu sertifikası (PEM) |
-| `-key` | `""` | TLS sunucu özel anahtarı (PEM) |
+| `-cert` | `""` | TLS sunucu sertifikası (PEM) - Boşsa otomatik üretilir (Zero-config) |
+| `-key` | `""` | TLS sunucu özel anahtarı (PEM) - Boşsa otomatik üretilir |
 | `-mode` | `priority` | Yönlendirme modu: `priority`, `automatic`, `manual` |
 | `-token-file` | `""` | Paylaşımlı gizli anahtar dosyası |
 | `-admin-socket`| `/run/homeproxy/admin.sock` | Yerel Unix yönetim soketi yolu |
@@ -153,20 +152,15 @@ chmod 600 "$HOME/.homeproxy/token"
 Ev bilgisayarında veya yerel ağdaki sunucuda çalıştırılır. Sunucuya outbound QUIC bağlantısı kurar:
 
 ```bash
-# Agent A (Yüksek öncelik: 10)
+# Sıfır Yapılandırma Modu (Self-signed sunucu sertifikası için -insecure):
+./bin/homeproxy agent -quic VDS_IP:4433 -id home-pc -insecure
+
+# Özel Domain ve Sertifika ile:
 ./bin/homeproxy agent \
   -quic proxy.example.com:4433 \
   -server-name proxy.example.com \
   -id home-pc-a \
   -priority 10 \
-  -token-file token
-
-# Agent B (Yedek agent: 20)
-./bin/homeproxy agent \
-  -quic proxy.example.com:4433 \
-  -server-name proxy.example.com \
-  -id home-pc-b \
-  -priority 20 \
   -token-file token
 ```
 
@@ -176,6 +170,7 @@ Ev bilgisayarında veya yerel ağdaki sunucuda çalıştırılır. Sunucuya outb
 | `-server-name` | `""` | TLS sertifikasındaki DNS adı (SNI doğrulaması) |
 | `-id` | `""` | Agent benzersiz tanımlayıcısı |
 | `-priority` | `100` | Öncelik derecesi (düşük sayı daha yüksek önceliktir) |
+| `-insecure` | `false` | **Zero-Config**: Sunucu sertifika doğrulamasını atlar (Self-signed modda gerekir) |
 | `-ca` | `""` | Özel CA sertifikası yolu (boş bırakılırsa sistem kökleri kullanılır) |
 | `-allow-private`| `false` | **DİKKAT**: Özel/yerel IP çıkışına izin verir (yalnızca test ortamları için) |
 
