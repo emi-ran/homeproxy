@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
 	"math/big"
 	"net"
 	"strings"
@@ -174,13 +175,16 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 		return
 	}
 	if b[1] == 3 {
+		log.Printf("socks: UDP ASSOCIATE requested from %v (addr=%s)", c.RemoteAddr(), addr)
 		s.serveUDP(ctx, c, p, addr)
 		return
 	}
 	if b[1] != 1 {
+		log.Printf("socks: unsupported command %d from %v", b[1], c.RemoteAddr())
 		c.Write([]byte{5, 7, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
+	log.Printf("socks: TCP CONNECT to %s from %v", addr, c.RemoteAddr())
 	replied := false
 	failure := byte(1)
 	defer func() {
