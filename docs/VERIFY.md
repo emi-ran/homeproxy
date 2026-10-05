@@ -29,6 +29,18 @@ Host quic-go warning: receive buffer 208 KiB requested 7168 KiB, obtained 416 Ki
 - Final `go test -count=1 -v ./...`: `ok homeproxy 21.965s`.
 - Final `go test -race -count=1 ./...`: `ok homeproxy 24.219s`, no race reports.
 - Final `go vet ./...`, Linux build, Windows amd64 cross-build, `git diff --check`: exit 0. Refreshed `bin/homeproxy` and `bin/homeproxy-windows-amd64.exe` (ignored artifacts).
-- Existing four-slot/10s registration bound assessed; remaining handshake DoS and reconnect starvation documented in README, not represented as production protection.
+- Original four-slot/10s registration bound assessed at that baseline; slots then covered entire connections. Current implementation bounds pending authentication only, independently of the configurable active-agent limit. Pending-slot exhaustion can still temporarily reject reconnects; no production DoS guarantee.
 
 No Docker builds/runs, deployment, remote PC egress test, Windows runtime test, Android build or push.
+
+## Configurable agent capacity (2026-10-05, Windows)
+
+- Baseline: clean `c5b758d`; active-agent limit was hardcoded to two.
+- `go test ./internal/proxy -run 'Test(MaxAgentsEnv|AgentLimit)$' -count=10`: passed. Real QUIC registration acknowledges two/default and five/configured agents, rejects the next, and replaces the same ID at full capacity. Reconnect checks use registration acknowledgements and connection-close signals, not sleeps.
+- Environment tests cover unset default, positive values through platform `int` maximum, empty/zero/negative/malformed/overflow errors before server startup.
+- `go test ./internal/proxy`: passed (`22.923s`).
+- `go vet ./internal/proxy` and `go build ./cmd/homeproxy`: passed.
+- `docker compose config --format json`: parsed successfully; local ignored `.env` supplies `HOMEPROXY_MAX_AGENTS=5` to container environment. No container started.
+- `git diff --check`: passed; Git emitted only LF/CRLF conversion warnings.
+- Race check blocked: `go test -race ./internal/proxy -run 'Test(MaxAgentsEnv|AgentLimit)$' -count=10` reported `go: -race requires cgo; enable cgo by setting CGO_ENABLED=1`. Environment has `CGO_ENABLED=0`, no `gcc` on PATH; no toolchain changes made.
+- No deployment, production environment edits, commit, push, Android diagnostics or adb changes.

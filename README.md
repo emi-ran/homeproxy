@@ -122,7 +122,8 @@ HomeProxy, Dokploy üzerinde **Application** (Docker Swarm) olarak çalışacak 
 2. **Build Type**: `Dockerfile` (Proje kökündeki çok-aşamalı minimal Dockerfile otomatik kullanılır).
 3. **Environment (Ortam Değişkenleri)**:
    ```env
-   HOMEPROXY_TOKEN="REPLACE_WITH_A_STRONG_RANDOM_TOKEN"
+    HOMEPROXY_TOKEN="REPLACE_WITH_A_STRONG_RANDOM_TOKEN"
+    HOMEPROXY_MAX_AGENTS=5
    ```
 4. **Port Yapılandırması**:
    - `4433:4433/udp` ➡️ **Host Mode** seçin (Evdeki agent'ın QUIC tüneliyle bağlanabilmesi için dışarı açık olmalı).
@@ -135,6 +136,20 @@ zero-config: loaded persistent self-signed TLS 1.3 certificate
 server TLS certificate SHA-256: <64 hex karakter>
 server ready
 ```
+
+Eşzamanlı agent limiti varsayılan **2**; `HOMEPROXY_MAX_AGENTS` pozitif tamsayı
+olmalıdır. Boş, sıfır, negatif, sayısal olmayan veya platformun `int` aralığını
+aşan değer sunucu başlangıcını hata ile durdurur. Aynı ID yeniden bağlanınca eski
+bağlantı değiştirilir; limit doluyken de reconnect çalışır. En fazla dört bekleyen
+kimlik doğrulama ayrı sınırlanır; aktif agent'lar bu slotları tutmaz. Bekleyen
+slotların kötüye kullanımı reconnect'i geçici engelleyebilir; DoS garantisi yoktur.
+
+Dokploy Application için **Environment** alanına `HOMEPROXY_MAX_AGENTS=5` ekleyin;
+yerel `.env` production ayarını değiştirmez. Yerel Docker Compose, kökteki `.env`
+dosyasından `HOMEPROXY_MAX_AGENTS=5` değerini konteynere geçirir; ayar yoksa/boşsa
+Compose varsayılanı 2'dir. CLI `.env` otomatik yüklemez; doğrudan çalıştırırken
+ortam değişkenini dışarıdan ayarlayın (PowerShell: `$env:HOMEPROXY_MAX_AGENTS='5'`).
+Değişiklik çalışan sunucuya canlı uygulanmaz; sonraki başlangıçta okunur.
 
 ---
 

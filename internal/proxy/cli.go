@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -63,6 +64,10 @@ func RunCLI(args []string) error {
 	defer cancel()
 	switch role {
 	case "server":
+		maxAgents, err := maxAgentsFromEnv()
+		if err != nil {
+			return err
+		}
 		if *mode != "priority" && *mode != "automatic" && *mode != "manual" {
 			return errors.New("invalid routing mode")
 		}
@@ -98,6 +103,7 @@ func RunCLI(args []string) error {
 		}
 		log.Printf("server TLS certificate SHA-256: %s", certificateFingerprint(pair))
 		s := newServer(token, *mode)
+		s.maxAgents = maxAgents
 		if err := s.listenManagement(ctx, *admin); err != nil {
 			return err
 		}
@@ -181,4 +187,16 @@ func RunCLI(args []string) error {
 	default:
 		return errors.New("unknown role")
 	}
+}
+
+func maxAgentsFromEnv() (int, error) {
+	value, set := os.LookupEnv("HOMEPROXY_MAX_AGENTS")
+	if !set {
+		return 2, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0, errors.New("HOMEPROXY_MAX_AGENTS must be a positive integer")
+	}
+	return n, nil
 }

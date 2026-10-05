@@ -19,10 +19,11 @@ type server struct {
 	token, mode, selected string
 	agents                map[string]*agentPeer
 	routes                map[string]string
+	maxAgents             int
 }
 
 func newServer(token, mode string) *server {
-	return &server{token: token, mode: mode, agents: make(map[string]*agentPeer), routes: make(map[string]string)}
+	return &server{token: token, mode: mode, agents: make(map[string]*agentPeer), routes: make(map[string]string), maxAgents: 2}
 }
 
 func (s *server) chooseForPort(port string) *agentPeer {

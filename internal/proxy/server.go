@@ -58,6 +58,7 @@ func (s *server) listenQUIC(ctx context.Context, addr string, t *tls.Config) (st
 		s.mu.Unlock()
 	}()
 	go func() {
+		// Bound pending authentication only; active agents use maxAgents.
 		slots := make(chan struct{}, 4)
 		for {
 			c, e := l.Accept(ctx)
@@ -98,7 +99,7 @@ func (s *server) register(ctx context.Context, c *quic.Conn) {
 		old.conn.CloseWithError(0, "replaced by reconnecting agent")
 		delete(s.agents, h.ID)
 	}
-	if len(s.agents) >= 2 {
+	if len(s.agents) >= s.maxAgents {
 		s.mu.Unlock()
 		return
 	}
@@ -110,12 +111,14 @@ func (s *server) register(ctx context.Context, c *quic.Conn) {
 	q.Close()
 	q.CancelRead(0)
 	go s.receiveDatagrams(p)
-	<-c.Context().Done()
-	s.mu.Lock()
-	if s.agents[h.ID] == p {
-		delete(s.agents, h.ID)
-	}
-	s.mu.Unlock()
+	go func() {
+		<-c.Context().Done()
+		s.mu.Lock()
+		if s.agents[h.ID] == p {
+			delete(s.agents, h.ID)
+		}
+		s.mu.Unlock()
+	}()
 }
 
 func (s *server) listenSOCKS(ctx context.Context, addr string) (string, error) {
