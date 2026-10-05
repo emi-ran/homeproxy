@@ -1,3 +1,9 @@
 bin/
 secrets/
+data/
+/.env
+/.env.*
+/homeproxy.exe
 *.sock
+mobile/*.aar
+mobile/*-sources.jar

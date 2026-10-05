@@ -18,10 +18,20 @@ type server struct {
 	mu                    sync.Mutex
 	token, mode, selected string
 	agents                map[string]*agentPeer
+	routes                map[string]string
 }
 
 func newServer(token, mode string) *server {
-	return &server{token: token, mode: mode, agents: make(map[string]*agentPeer)}
+	return &server{token: token, mode: mode, agents: make(map[string]*agentPeer), routes: make(map[string]string)}
+}
+
+func (s *server) chooseForPort(port string) *agentPeer {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.routes[port]; ok {
+		return s.agents[id]
+	}
+	return s.chooseLocked()
 }
 
 func (s *server) choose() *agentPeer {

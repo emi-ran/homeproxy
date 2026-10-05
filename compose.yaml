@@ -1,11 +1,12 @@
 services:
   homeproxy:
     build: .
-    command: ["server", "-quic", "0.0.0.0:4433", "-socks", "0.0.0.0:1080", "-cert", "/secrets/cert.pem", "-key", "/secrets/key.pem", "-token-file", "/secrets/token"]
+    command: ["server", "-quic", "0.0.0.0:4433", "-socks", "0.0.0.0:1080", "-state-dir", "/var/lib/homeproxy", "-token-file", "/secrets/token"]
     ports:
       - "4433:4433/udp"
     volumes:
       - ./secrets:/secrets:ro
+      - homeproxy-state:/var/lib/homeproxy
     networks:
       - private
       - transport
@@ -17,6 +18,8 @@ services:
     mem_limit: 192m
     pids_limit: 128
     restart: unless-stopped
+volumes:
+  homeproxy-state:
 networks:
   private:
     internal: true

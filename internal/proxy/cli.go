@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -29,6 +30,8 @@ func RunCLI(args []string) error {
 	socks := f.String("socks", "127.0.0.1:1080", "private SOCKS bind")
 	cert := f.String("cert", "", "server PEM certificate")
 	key := f.String("key", "", "server PEM key")
+	state := f.String("state-dir", "data", "persistent server TLS state directory")
+	panelAddr := f.String("panel", "", "private HTTP panel bind address; requires HOMEPROXY_PANEL_PASSWORD")
 	ca := f.String("ca", "", "agent CA PEM (otherwise system roots)")
 	name := f.String("server-name", "", "TLS certificate DNS name")
 	tokenFile := f.String("token-file", "", "shared token file (otherwise HOMEPROXY_TOKEN)")
@@ -65,10 +68,19 @@ func RunCLI(args []string) error {
 		}
 		var pair tls.Certificate
 		var certErr error
+		if (*cert == "") != (*key == "") {
+			return errors.New("cert and key must be supplied together")
+		}
 		if *cert != "" && *key != "" {
 			pair, certErr = tls.LoadX509KeyPair(*cert, *key)
 		}
-		if certErr != nil || *cert == "" || *key == "" {
+		if certErr != nil {
+			return fmt.Errorf("load TLS certificate: %w", certErr)
+		}
+		if *cert == "" {
+			if (os.Getenv("HOMEPROXY_CERT") == "") != (os.Getenv("HOMEPROXY_KEY") == "") {
+				return errors.New("HOMEPROXY_CERT and HOMEPROXY_KEY must be supplied together")
+			}
 			if os.Getenv("HOMEPROXY_CERT") != "" && os.Getenv("HOMEPROXY_KEY") != "" {
 				var e error
 				pair, e = tls.X509KeyPair([]byte(os.Getenv("HOMEPROXY_CERT")), []byte(os.Getenv("HOMEPROXY_KEY")))
@@ -77,13 +89,14 @@ func RunCLI(args []string) error {
 				}
 			} else {
 				var e error
-				pair, e = generateSelfSignedCert()
+				pair, e = loadOrCreateCertificate(filepath.Join(*state, "server-tls.pem"))
 				if e != nil {
 					return fmt.Errorf("failed to generate self-signed certificate: %w", e)
 				}
-				log.Print("zero-config: generated self-signed TLS 1.3 certificate")
+				log.Print("zero-config: loaded persistent self-signed TLS 1.3 certificate")
 			}
 		}
+		log.Printf("server TLS certificate SHA-256: %s", certificateFingerprint(pair))
 		s := newServer(token, *mode)
 		if err := s.listenManagement(ctx, *admin); err != nil {
 			return err
@@ -95,6 +108,11 @@ func RunCLI(args []string) error {
 			return err
 		}
 		log.Print("server ready")
+		if *panelAddr != "" {
+			if err := s.startPanel(ctx, *panelAddr, *socks, *state, os.Getenv("HOMEPROXY_PANEL_PASSWORD")); err != nil {
+				return err
+			}
+		}
 		<-ctx.Done()
 		return nil
 	case "agent":

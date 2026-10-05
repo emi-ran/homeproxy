@@ -12,6 +12,10 @@ import (
 )
 
 func runAgent(ctx context.Context, addr string, t *tls.Config, token, id string, priority int, allow bool) error {
+	return runAgentStatus(ctx, addr, t, token, id, priority, allow, nil)
+}
+
+func runAgentStatus(ctx context.Context, addr string, t *tls.Config, token, id string, priority int, allow bool, connected func()) error {
 	c, e := quic.DialAddr(ctx, addr, t, qc)
 	if e != nil {
 		return e
@@ -38,6 +42,9 @@ func runAgent(ctx context.Context, addr string, t *tls.Config, token, id string,
 	}
 	q.Close()
 	q.CancelRead(0)
+	if connected != nil {
+		connected()
+	}
 	go agentDatagrams(c)
 	for {
 		q, e := c.AcceptStream(ctx)

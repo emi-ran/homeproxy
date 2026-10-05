@@ -5,8 +5,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOMAXPROCS=2 go build -p=1 -trimpath -o /homeproxy ./cmd/homeproxy
 FROM alpine:3.22
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 proxy && mkdir /run/homeproxy && chown proxy /run/homeproxy
+RUN apk add --no-cache ca-certificates && adduser -D -u 10001 proxy && mkdir -p /run/homeproxy /var/lib/homeproxy && chown proxy /run/homeproxy /var/lib/homeproxy
 COPY --from=build /homeproxy /usr/local/bin/homeproxy
 USER proxy
 ENTRYPOINT ["homeproxy"]
-CMD ["server", "-quic", "0.0.0.0:4433", "-socks", "0.0.0.0:1080"]
+CMD ["server", "-quic", "0.0.0.0:4433", "-socks", "0.0.0.0:1080", "-state-dir", "/var/lib/homeproxy", "-panel", "0.0.0.0:3000"]

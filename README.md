@@ -36,7 +36,7 @@ HomeProxy, hedef adresleri sunucu (VDS/VPS) üzerinden **çözümlemez ve sunucu
 
 1. **Sunucu (`server`)**: VDS üzerinde çalışır. SOCKS5 istemcilerini (TCP ve UDP) kabul eder ve evdeki agent ile QUIC (TLS 1.3) üzerinden şifreli bir tünel kurar.
 2. **Uç Ajan (`agent`)**: Evdeki PC'de çalışır. Sunucuya dışarıdan içeri (outbound) bağlanır (modemde port açmaya gerek yoktur). Gelen istekleri ev internetinizin IP adresiyle hedefe bağlar.
-3. **Sıfır Yapılandırma (Zero-Config TLS)**: Sunucu, RAM üzerinde otomatik TLS 1.3 sertifikası üretir. Harici domain veya Let's Encrypt sertifikası gerekmez.
+3. **Sıfır Yapılandırma (Zero-Config TLS)**: Sunucu otomatik TLS 1.3 sertifikası üretip kalıcı `server-tls.pem` dosyasına saklar. Harici domain veya Let's Encrypt gerekmez. SHA-256 parmak izi başlangıç logunda gösterilir.
 
 ---
 
@@ -52,6 +52,9 @@ HomeProxy, hedef adresleri sunucu (VDS/VPS) üzerinden **çözümlemez ve sunucu
 ---
 
 ## 🛠️ Derleme Kılavuzu (Build)
+
+Android Flutter agent geliştirmesi: [app/README.md](app/README.md).
+Telefon ve sabit proxy portları fikri: [docs/PHONE_AGENT_PLAN.md](docs/PHONE_AGENT_PLAN.md).
 
 Gereksinim: **Go 1.25+**
 
@@ -78,6 +81,33 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy ./cmd/
 
 ## 1. Dokploy / VDS Sunucu Kurulumu
 
+### Web panel ve port–agent eşlemesi
+
+Dockerfile sunucuyla birlikte paneli `3000/tcp` üzerinde başlatır. Dokploy
+Application **Environment** alanına ayrı, en az 16 bayt
+`HOMEPROXY_PANEL_PASSWORD` ekleyin. Şifre yoksa Docker varsayılan başlangıcı hata
+verir; kullanıcı adı gerekmez. Şifreyi image'a veya Git'e eklemeyin. Yerel CLI
+paneli `-panel 127.0.0.1:3000` ile açar; ortam değişkenini kendiniz yükleyin,
+uygulama `.env` dosyasını otomatik okumaz.
+
+Dokploy Domain ayarında container port `3000` ve HTTPS kullanın. Panel portunu
+hosta doğrudan HTTP olarak açmayın. Cookie HTTPS erişiminde Secure/HttpOnly,
+SameSite Strict; yönetim işlemleri CSRF token gerektirir. Oturumlar 8 saat sonra
+ve sunucu restart'ında biter. Giriş denemeleri toplam saniyede bir ile sınırlı.
+
+Kalıcı named volume `homeproxy-state` için mount path `/var/lib/homeproxy`
+ekleyin. Panelden `1080 = ev-pc`, `1081 = telefon` kaydedilebilir. Agent ID'leri
+cihazlarda kullanılan değerlerle birebir eşleşmeli. TCP CONNECT ve UDP ASSOCIATE
+seçilen agent'a sabitlenir; agent yoksa başka cihaza failover yapılmaz. Eşleme
+değişikliği yalnız yeni oturumlara uygulanır. Portlar SOCKS bind adresinde açılır,
+yalnız iç ağda kalmalı. En fazla 32 eşleme; panel bu sürümde ekleme/güncelleme
+sunar, silme sunmaz. `routes.json` volume'da saklanır ve başlangıçta yüklenir.
+Eşlenmemiş varsayılan `1080` portu eski priority davranışını korur; kullanmadan
+önce onu da PC'ye eşleyin. Üç hesap kotası otomatik uygulanmaz.
+
+Compose Dokploy Application deploy'unda kullanılmaz. Bu ayarlar Dokploy
+Environment, Domain ve Mounts alanlarından yapılmalıdır.
+
 HomeProxy, Dokploy üzerinde **Application** (Docker Swarm) olarak çalışacak şekilde optimize edilmiştir.
 
 ### Dokploy Panelinde Ayarlar:
@@ -94,13 +124,37 @@ HomeProxy, Dokploy üzerinde **Application** (Docker Swarm) olarak çalışacak 
 
 Sunucu ayağa kalktığında `docker logs` üzerinde şunu görmelisiniz:
 ```text
-zero-config: generated self-signed TLS 1.3 certificate
+zero-config: loaded persistent self-signed TLS 1.3 certificate
+server TLS certificate SHA-256: <64 hex karakter>
 server ready
 ```
 
 ---
 
 ## 2. Kendi Bilgisayarınız (Windows Agent Kurulumu)
+
+### Android için sertifika parmak izi
+
+Dokploy Application'a **named volume** ekleyin: `homeproxy-state`, mount path
+`/var/lib/homeproxy`. Güncellemelerde volume'u koruyun; birden fazla bağımsız
+HomeProxy sunucusu aynı volume'u paylaşmamalı. Docker image bu dizini UID 10001
+için hazırlar. Mevcut bind mount kullanılıyorsa dizin bu kullanıcıya yazılabilir
+olmalıdır. Image güncellemesi ve mount ayarı deploy gerektirir.
+
+Sunucu logundaki `server TLS certificate SHA-256:` sonrasındaki 64 karakteri
+Android uygulamasının sertifika alanına girin. Parmak izini yalnız güvenilir
+Dokploy panelinden alın. Token veya private key paylaşmayın.
+
+Sertifika ve private key tek `server-tls.pem` dosyasında saklanır. Restart ve
+redeploy sırasında volume korunursa parmak izi değişmez. Volume/dosya silinirse
+kimlik değişir; yeni parmak izi telefona güvenilir yoldan girilmelidir.
+Bozuk/okunamayan sertifika otomatik değiştirilmez; sunucu hata verir.
+İlk geçişte eski RAM sertifikası korunamaz; yeni kalıcı sertifika oluşturulur.
+
+CLI varsayılanı `-state-dir data`; Docker varsayılanı `/var/lib/homeproxy`.
+Özel `-cert`/`-key` veya `HOMEPROXY_CERT`/`HOMEPROXY_KEY` kullanılıyorsa onlar
+önceliklidir; yine parmak izi loglanır. İki değer birlikte verilmeli, geçersiz
+sertifikada otomatik sertifikaya sessiz geçiş yapılmaz.
 
 Evdeki Windows bilgisayarınız trafiğin internete çıkacağı uç noktadır.
 

@@ -123,6 +123,11 @@ func (s *server) listenSOCKS(ctx context.Context, addr string) (string, error) {
 	if e != nil {
 		return "", e
 	}
+	s.serveSOCKSListener(ctx, l)
+	return l.Addr().String(), nil
+}
+
+func (s *server) serveSOCKSListener(ctx context.Context, l net.Listener) {
 	go func() { <-ctx.Done(); l.Close() }()
 	go func() {
 		slots := make(chan struct{}, maxSessions)
@@ -139,7 +144,6 @@ func (s *server) listenSOCKS(ctx context.Context, addr string) (string, error) {
 			}
 		}
 	}()
-	return l.Addr().String(), nil
 }
 
 func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
@@ -173,7 +177,8 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 		}
 		return
 	}
-	p := s.choose()
+	_, localPort, _ := net.SplitHostPort(c.LocalAddr().String())
+	p := s.chooseForPort(localPort)
 	if p == nil {
 		c.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
