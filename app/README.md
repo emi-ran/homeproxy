@@ -30,7 +30,8 @@ alınmalı; telefon bağlandığı sunucuyu otomatik güvenilir kabul etmez.
 Varsayılan sertifika pin kontrolüdür. `TLS doğrulamasını atla (insecure)`
 seçeneği kullanıcı risk onayından sonra pin gereksinimini kaldırır. TLS şifrelemesi
 kalır ancak sunucu kimliği doğrulanmaz; sahte sunucu token'ı ele geçirebilir.
-Seçenek diske kaydedilmez ve değişiklik sonraki başlatmada uygulanır.
+Seçenek diğer ayarlarla birlikte kaydedilir; açık olduğunda ekranda uyarı kalır.
+Değişiklik sonraki başlatmada uygulanır.
 
 Sunucu otomatik sertifikasını `server-tls.pem` olarak state dizininde saklar.
 Docker/Dokploy için `/var/lib/homeproxy` kalıcı volume'u korunmalıdır. Güvenilir
@@ -40,9 +41,14 @@ kalıcı kimlik oluşur. Production mount/deploy otomatik yapılmaz.
 
 Başlat kullanıcı uygulamadayken servisi açar. Flutter ekranı kapansa da servis
 tüneli sahiplenir. Durdur veya bildirimdeki Durdur bağlantıyı kapatır.
-Android bildirim izni istenir. Ayarlar/token ilk sürümde diske kaydedilmez;
+Android bildirim izni istenir. Sunucu, agent ID, token, parmak izi ve insecure
+seçimi Android Keystore AES-GCM ile şifreli tek kayıt olarak saklanır.
+Başlat ayarları otomatik kaydeder; açılışta form geri yüklenir ama
+bağlantı otomatik başlamaz. Normal APK güncellemeleri kayıtları korur; kaldırma
+ve uygulama verilerini temizleme siler. Backup kapalıdır. Okuma hatasında kayıt
+silinmez; yeniden giriş/kaydetme kullanıcı kararıdır.
 Bildirim sabit ikon kullanır ve yalnız bağlantı durumu değişince güncellenir.
-uygulama süreci ölürse yeniden girilir. Otomatik boot/process restart yoktur.
+Otomatik boot/process restart yoktur.
 
 HyperOS pil ve otomatik başlatma ayarları fiziksel test gerektirir. Foreground
 service kesintisiz çalışmayı garanti etmez. Mobil veri için Wi-Fi'yi kullanıcı

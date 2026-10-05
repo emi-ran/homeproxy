@@ -4,6 +4,7 @@ data/
 /.env
 /.env.*
 /homeproxy.exe
+/.opencode-playwright/
 *.sock
 mobile/*.aar
 mobile/*-sources.jar

@@ -12,7 +12,7 @@
 - `flutter test`: boş bağlantı ayarları form testi geçti.
 - `go test -race ...`: çalışmadı; mevcut ortamda CGO kapalı. Race doğrulanmadı.
 
-APK derleme/kurulum ve fiziksel cihaz tünel testi henüz doğrulanmadı.
+Fiziksel cihazda gerçek TCP/UDP tünel testi henüz doğrulanmadı.
 İlk APK derlemesi NDK kurulumu tamamlanmadan çalıştı; eksik
 `source.properties` nedeniyle başarısız oldu. NDK 28.2.13676358 ve Android SDK
 Platform 36 kuruldu. Android arm64 `gomobile bind` AAR derlemesi geçti.
@@ -25,12 +25,23 @@ Production deploy, Mori ayarı, telefon ağ/pil ayarı değişikliği yapılmad�
 
 ## İsteğe bağlı insecure modu
 
-Bildirim animasyonlu Android upload ikonu yerine sabit vector ikon kullanıyor;
-yalnız durum değişince güncelleniyor. Bu değişiklik APK olarak derlendi; son
-bidirim değişikliğinin telefona kurulması henüz doğrulanmadı.
-
 Kullanıcı isteğiyle varsayılanı kapalı TLS doğrulamasını atlama seçeneği eklendi.
 UI risk onayı ister; pin yalnız bu açık seçenekle devre dışı kalır. Go mobil
 testleri pinli bağlantı, yanlış pin reddi ve açık insecure bağlantıyı doğruladı.
 Flutter analyze/test, arm64 AAR ve debug APK build geçti. Güncel APK ADB ile
 kuruldu ve activity başlatıldı. Canlı sunucu bağlantısı doğrulanmadı.
+
+## Kalıcı mobil ayarlar
+
+Sunucu, ID, token, parmak izi ve insecure tercihi Android Keystore AES-GCM ile
+şifreli kaydedilir. Flutter analiz ve iki widget testi geçti (boş form ve
+kayıtlı ayarların otomatik bağlantı açmadan yüklenmesi). Debug APK derlendi ve
+ADB güncelleme kurulumu başarılı oldu. Fiziksel cihazda gerçek kaydet/yeniden
+aç/güncelleme sonrası geri yükleme henüz doğrulanmadı. Kayıt hataları kullanıcıya
+bildirilir; bozuk kayıt sessiz silinmez.
+Başlat ayarları otomatik kaydeder; ayrı Kaydet düğmesi kaldırıldı. Bu sürümün
+Flutter analiz/test, APK build ve ADB güncelleme kurulumu geçti.
+
+Bildirim animasyonlu Android upload ikonu yerine sabit vector ikon kullanıyor;
+yalnız durum değişince güncelleniyor. Güncel APK ile telefona kuruldu; cihazda
+bildirim animasyonu davranışı ayrıca gözle doğrulanmadı.

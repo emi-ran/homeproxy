@@ -83,6 +83,13 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o bin/homeproxy ./cmd/
 
 ### Web panel ve port–agent eşlemesi
 
+Giriş ekranı ve sekme başlığı nötrdür; HomeProxy adı yalnız doğrulanmış oturumda
+gösterilir. Bu görsel tercih, servis gizleme veya güvenlik garantisi değildir.
+Panel mobil uyumlu koyu tema ve çevrimiçi agent ID önerileri kullanır.
+Giriş sonrası cihazların QUIC bağlantı IP'leri gösterilir; aynı IP kullanan
+cihazlar işaretlenir. Bu, sunucunun gördüğü bağlantı IP'sidir, oyun hedefindeki
+çıkış IP'sinin kesin ölçümü değildir. Ağ değişiminden sonra sayfayı yenileyin.
+
 Dockerfile sunucuyla birlikte paneli `3000/tcp` üzerinde başlatır. Dokploy
 Application **Environment** alanına ayrı, en az 16 bayt
 `HOMEPROXY_PANEL_PASSWORD` ekleyin. Şifre yoksa Docker varsayılan başlangıcı hata

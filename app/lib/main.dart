@@ -40,6 +40,34 @@ class _AgentScreenState extends State<AgentScreen> {
   String? error;
   bool busy = false;
   bool insecure = false;
+  bool loading = true;
+  Map<String, Object> get settings => {
+    'address': address.text.trim(),
+    'id': id.text.trim(),
+    'token': token.text,
+    'fingerprint': fingerprint.text.trim(),
+    'insecure': insecure,
+  };
+
+  Future<void> loadSettings() async {
+    try {
+      final saved = await channel.invokeMapMethod<String, dynamic>(
+        'loadSettings',
+      );
+      if (!mounted) return;
+      if (saved != null && saved.isNotEmpty) {
+        address.text = saved['address'] as String? ?? '';
+        id.text = saved['id'] as String? ?? 'telefon';
+        token.text = saved['token'] as String? ?? '';
+        fingerprint.text = saved['fingerprint'] as String? ?? '';
+        insecure = saved['insecure'] == true;
+      }
+    } on PlatformException catch (e) {
+      if (mounted) error = e.message ?? 'Ayarlar okunamadı';
+    } finally {
+      if (mounted) setState(() => loading = false);
+    }
+  }
 
   Future<void> changeTLS(bool value) async {
     if (!value) {
@@ -73,6 +101,7 @@ class _AgentScreenState extends State<AgentScreen> {
     super.initState();
     timer = Timer.periodic(const Duration(seconds: 1), (_) => refresh());
     refresh();
+    loadSettings();
   }
 
   Future<void> refresh() async {
@@ -91,17 +120,10 @@ class _AgentScreenState extends State<AgentScreen> {
       error = null;
     });
     try {
+      if (start) await channel.invokeMethod('saveSettings', settings);
       await channel.invokeMethod(
         start ? 'start' : 'stop',
-        start
-            ? {
-                'address': address.text.trim(),
-                'id': id.text.trim(),
-                'token': token.text,
-                'fingerprint': fingerprint.text.trim(),
-                'insecure': insecure,
-              }
-            : null,
+        start ? settings : null,
       );
       await refresh();
     } on PlatformException catch (e) {
@@ -123,90 +145,106 @@ class _AgentScreenState extends State<AgentScreen> {
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('HOMEPROXY')),
-    body: SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(24),
-        children: [
-          const Text(
-            'TELEFON AGENT',
-            style: TextStyle(letterSpacing: 3, color: Color(0xffb8dc65)),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'İnternet çıkışın.\nKontrol sende.',
-            style: TextStyle(fontSize: 34, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 24),
-          Semantics(
-            liveRegion: true,
-            child: Card(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Icon(status == 'Bağlı' ? Icons.link : Icons.link_off),
-                    const SizedBox(width: 12),
-                    Expanded(child: Text(status)),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
-          Form(
-            key: form,
-            child: Column(
+    body: loading
+        ? const Center(child: CircularProgressIndicator())
+        : SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.all(24),
               children: [
-                field(address, 'Sunucu adresi', hint: 'proxy.example.com:4433'),
-                field(id, 'Agent ID'),
-                field(token, 'Token', secret: true),
-                SwitchListTile(
-                  title: const Text('TLS doğrulamasını atla (insecure)'),
-                  subtitle: const Text(
-                    'Sunucu kimliği doğrulanmaz. Değişiklik sonraki bağlantıda uygulanır.',
-                  ),
-                  value: insecure,
-                  onChanged: busy ? null : changeTLS,
+                const Text(
+                  'TELEFON AGENT',
+                  style: TextStyle(letterSpacing: 3, color: Color(0xffb8dc65)),
                 ),
-                if (!insecure)
-                  field(
-                    fingerprint,
-                    'Sertifika SHA-256',
-                    hint: '64 karakterlik parmak izi',
+                const SizedBox(height: 12),
+                const Text(
+                  'İnternet çıkışın.\nKontrol sende.',
+                  style: TextStyle(fontSize: 34, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 24),
+                Semantics(
+                  liveRegion: true,
+                  child: Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Row(
+                        children: [
+                          Icon(status == 'Bağlı' ? Icons.link : Icons.link_off),
+                          const SizedBox(width: 12),
+                          Expanded(child: Text(status)),
+                        ],
+                      ),
+                    ),
                   ),
+                ),
+                const SizedBox(height: 20),
+                if (insecure)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      'Uyarı: TLS sunucu kimliği doğrulanmıyor.',
+                      style: TextStyle(color: Colors.orange),
+                    ),
+                  ),
+                Form(
+                  key: form,
+                  child: Column(
+                    children: [
+                      field(
+                        address,
+                        'Sunucu adresi',
+                        hint: 'proxy.example.com:4433',
+                      ),
+                      field(id, 'Agent ID'),
+                      field(token, 'Token', secret: true),
+                      SwitchListTile(
+                        title: const Text('TLS doğrulamasını atla (insecure)'),
+                        subtitle: const Text(
+                          'Sunucu kimliği doğrulanmaz. Değişiklik sonraki bağlantıda uygulanır.',
+                        ),
+                        value: insecure,
+                        onChanged: busy ? null : changeTLS,
+                      ),
+                      if (!insecure)
+                        field(
+                          fingerprint,
+                          'Sertifika SHA-256',
+                          hint: '64 karakterlik parmak izi',
+                        ),
+                    ],
+                  ),
+                ),
+                if (error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 16),
+                    child: Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ),
+                FilledButton(
+                  onPressed: busy ? null : () => command(true),
+                  child: const Text('Bağlantıyı başlat'),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton(
+                  onPressed: busy ? null : () => command(false),
+                  child: const Text('Durdur'),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Yalnız sunucudan gelen proxy trafiği taşınır. VPN profili oluşturulmaz. Ayrı dış IP için mobil veri kullan.',
+                  style: TextStyle(color: Colors.white60),
+                ),
+                const SizedBox(height: 12),
+                const Text(
+                  'Ayarlar cihazda şifreli saklanır. Açılışta bağlantı otomatik başlamaz. HyperOS pil kısıtları arka plan bağlantısını durdurabilir.',
+                  style: TextStyle(color: Colors.white60),
+                ),
               ],
             ),
           ),
-          if (error != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: Text(
-                error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ),
-          FilledButton(
-            onPressed: busy ? null : () => command(true),
-            child: const Text('Bağlantıyı başlat'),
-          ),
-          const SizedBox(height: 8),
-          OutlinedButton(
-            onPressed: busy ? null : () => command(false),
-            child: const Text('Durdur'),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'Yalnız sunucudan gelen proxy trafiği taşınır. VPN profili oluşturulmaz. Ayrı dış IP için mobil veri kullan.',
-            style: TextStyle(color: Colors.white60),
-          ),
-          const SizedBox(height: 12),
-          const Text(
-            'İlk sürüm: ayarlar ve token diske kaydedilmez. HyperOS pil kısıtları arka plan bağlantısını durdurabilir.',
-            style: TextStyle(color: Colors.white60),
-          ),
-        ],
-      ),
-    ),
   );
   Widget field(
     TextEditingController controller,

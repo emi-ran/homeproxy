@@ -11,6 +11,16 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(engine)
         MethodChannel(engine.dartExecutor.binaryMessenger, "homeproxy/agent").setMethodCallHandler { call, result ->
             when (call.method) {
+                "loadSettings" -> {
+                    try { result.success(AgentSettings(this).load()) }
+                    catch (e: Exception) { result.error("LOAD", "Kayıtlı ayarlar okunamadı. Kayıt silinmedi; bilgileri yeniden girip kaydedebilirsiniz.", null) }
+                }
+                "saveSettings" -> {
+                    try {
+                        AgentSettings(this).save(call.arguments as? Map<String, Any?> ?: emptyMap())
+                        result.success(null)
+                    } catch (e: Exception) { result.error("SAVE", "Ayarlar güvenli kaydedilemedi", null) }
+                }
                 "status" -> result.success(AgentService.status)
                 "start" -> {
                     val intent = Intent(this, AgentService::class.java)
