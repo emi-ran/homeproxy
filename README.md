@@ -175,14 +175,29 @@ PowerShell açıp doğrudan çalıştırabilirsiniz:
 
 ### PC Açıldığında Otomatik & Arka Planda Başlatma (Tavsiye Edilen)
 
-Bilgisayarınızı her açtığınızda **siyah konsol ekranı açılmadan**, tamamen arka planda sessiz sedasız çalışması için Windows Başlangıç klasörüne gizli bir VBScript kaydedebilirsiniz:
+Windows SCM backend hazır; Flutter GUI ayrı aşamada eklenir. Kurulum, yetki modeli,
+DPAPI ayarları ve GUI IPC sözleşmesi: [docs/WINDOWS_AGENT.md](docs/WINDOWS_AGENT.md).
+Servis `NT SERVICE\HomeProxyAgent` düşük yetkili sanal hesabıyla çalışır;
+otomatik başlar, yalnız process crash sonrasında yeniden başlatılır. Kurulum ve
+kaldırma UAC gerektirir. GUI normal kullanıcı olarak çalışır; token geri okunmaz.
+
+Windows'ta parametresiz `homeproxy.exe`, yanındaki `homeproxy-gui.exe` dosyasını
+açar; GUI paketlenmediyse açık hata verir. Kalıcı servis adı `homeproxy-service.exe`.
+`agent/server/select` CLI korunur. GUI varsayılanı SHA-256 pin doğrulamasıdır;
+insecure seçeneği yalnız açık kullanıcı tercihi ve güvenlik uyarısıyla kullanılmalıdır.
+
+Eski Startup VBScript kurulumu otomatik silinmez, çalışan agent öldürülmez.
+Geçişte eski başlangıç kaydını ve agent'ı kullanıcı kaldırmalıdır. Global mutex
+aynı ID ile console/servis oturumlarının birlikte çalışmasını engeller.
+
+#### Eski VBScript yöntemi (yeni kurulum için önerilmez)
 
 #### Tek Komutla Kurulum:
 PowerShell'i açın ve kendi VDS IP'nizi / Token'ınızı yazarak yapıştırın:
 
 ```powershell
 $vbsPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Startup\homeproxy-agent.vbs"
-$cmd = '"""C:\Users\YOUR_USER\Documents\GitHub\homeproxy\bin\homeproxy.exe"" agent -quic 203.0.113.10:4433 -id ev-pc -insecure -token REPLACE_WITH_A_STRONG_RANDOM_TOKEN'
+$cmd = '"""C:\HomeProxy\homeproxy.exe"" agent -quic example.com:4433 -id ev-pc -server-name example.com -token-file C:\HomeProxy\token.txt'
 $content = "Set WshShell = CreateObject(`"WScript.Shell`")`r`nWshShell.Run `"$cmd`", 0, False"
 [System.IO.File]::WriteAllText($vbsPath, $content)
 ```
@@ -206,6 +221,9 @@ Get-Process -Name homeproxy
 
 ### Agent'ı Durdurma
 Arka plandaki agent'ı sonlandırmak istediğinizde:
+SCM servisinde `homeproxy.exe service stop` kullanın (yönetici yetkisi gerekir).
+Kalıcı tünel kapatma için GUI IPC `disconnect` kullanır. Aşağıdaki eski komut
+yalnız manuel/Startup agent içindir; servis crash recovery tetiklememelidir.
 ```powershell
 Stop-Process -Name homeproxy -Force
 ```

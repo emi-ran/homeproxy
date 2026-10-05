@@ -51,6 +51,10 @@ func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insec
 	if a.cancel != nil {
 		return errors.New("Agent zaten çalışıyor")
 	}
+	unlock, ok := acquireInstanceLock("Local\\HomeProxyAgent_" + id)
+	if !ok {
+		return errors.New("agent ID already running or instance lock unavailable")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel, a.done, a.status = cancel, make(chan struct{}), "Bağlanıyor"
 	done := a.done
@@ -71,6 +75,7 @@ func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insec
 		},
 	}
 	go func() {
+		defer unlock()
 		defer close(done)
 		for ctx.Err() == nil {
 			a.setStatus("Bağlanıyor")

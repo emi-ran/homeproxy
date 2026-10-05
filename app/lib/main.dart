@@ -1,7 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+
+import 'windows_agent.dart';
 
 void main() => runApp(const HomeProxyApp());
 
@@ -18,7 +21,9 @@ class HomeProxyApp extends StatelessWidget {
       scaffoldBackgroundColor: const Color(0xff111614),
       useMaterial3: true,
     ),
-    home: const AgentScreen(),
+    home: defaultTargetPlatform == TargetPlatform.windows
+        ? const WindowsAgentScreen()
+        : const AgentScreen(),
   );
 }
 

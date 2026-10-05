@@ -3,6 +3,7 @@ module homeproxy
 go 1.25
 
 require (
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/quic-go/quic-go v0.54.1
 	golang.org/x/sys v0.23.0
 )
