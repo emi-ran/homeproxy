@@ -1,0 +1,130 @@
+name: HomeProxy Build Workflows
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_windows_gui:
+        description: 'Build Windows GUI App'
+        type: boolean
+        default: true
+      build_android_apk:
+        description: 'Build Android APK'
+        type: boolean
+        default: false
+      build_cli:
+        description: 'Build CLI Binaries (Windows & Linux)'
+        type: boolean
+        default: false
+
+jobs:
+  # ==========================================
+  # 1. WINDOWS GUI BUILD
+  # ==========================================
+  build-windows-gui:
+    name: Build Windows GUI App
+    if: ${{ inputs.build_windows_gui }}
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Build Go Windows Binaries
+        run: |
+          mkdir bin -ErrorAction SilentlyContinue
+          go build -trimpath -o bin/homeproxy.exe ./cmd/homeproxy
+          go build -trimpath -o bin/homeproxy-service.exe ./cmd/homeproxy
+
+      - name: Build Flutter Windows App
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build windows --release
+
+      - name: Bundle Go Binaries into GUI Package
+        run: |
+          Copy-Item -Path bin/homeproxy.exe -Destination app/build/windows/x64/runner/Release/
+          Copy-Item -Path bin/homeproxy-service.exe -Destination app/build/windows/x64/runner/Release/
+
+      - name: Upload Windows GUI Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeproxy-windows-gui
+          path: app/build/windows/x64/runner/Release/
+
+  # ==========================================
+  # 2. ANDROID APK BUILD
+  # ==========================================
+  build-android-apk:
+    name: Build Android APK
+    if: ${{ inputs.build_android_apk }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Build Flutter Android APK
+        working-directory: app
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeproxy-android-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  # ==========================================
+  # 3. CLI BINARIES BUILD
+  # ==========================================
+  build-cli:
+    name: Build CLI Binaries
+    if: ${{ inputs.build_cli }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build CLI Binaries
+        run: |
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/homeproxy-windows-amd64.exe ./cmd/homeproxy
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -o dist/homeproxy-linux-amd64 ./cmd/homeproxy
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -o dist/homeproxy-linux-arm64 ./cmd/homeproxy
+
+      - name: Upload CLI Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: homeproxy-cli-binaries
+          path: dist/
