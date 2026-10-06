@@ -1,5 +1,10 @@
 # Telefon ısınması — HomeProxy + Mori düzeltmeleri
 
+> **Durum:** 5 düzeltmenin tamamı uygulandı; testler yeşil (`go vet ./...`,
+> `go test ./...` root + `mobile` modülü, yeni koruma testleri `heatfix_test.go`).
+> Push yok, deploy yok — telefon APK'sı ve sunucu imajı yeniden build edilmeden
+> etki görünmez.
+
 Kaynak: kod incelemesi (canı canlı ölçüm yok). Isının tamamını bu düzeltmeler garanti etmez;
 MTU ve keepalive israfı kesin, gerisi ihtimali yüksek.
 
