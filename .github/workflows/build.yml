@@ -32,7 +32,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          # root module is go 1.25, mobile module go 1.26; build both from one toolchain
+          go-version: '1.26'
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
@@ -81,17 +82,40 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
+      - name: Ensure Android NDK
+        run: |
+          if [ -z "$(ls -d "$ANDROID_HOME/ndk"/*/ 2>/dev/null | head -1)" ]; then
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager "ndk;28.2.13676358"
+          fi
+          ls -d "$ANDROID_HOME/ndk"/*
+
+      - name: Build Go AAR (gomobile)
+        working-directory: mobile
+        # homeproxy.aar is intentionally not committed; gradle loads it from mobile/.
+        run: |
+          go install golang.org/x/mobile/cmd/gobind
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          go tool gomobile bind -target=android/arm64 -androidapi 23 -o homeproxy.aar .
+          ls -la homeproxy.aar
+
       - name: Build Flutter Android APK
         working-directory: app
         run: |
           flutter pub get
-          flutter build apk --release
+          # AAR is arm64 only; match it instead of packaging ABIs without the Go lib
+          flutter build apk --release --target-platform android-arm64
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
@@ -114,7 +138,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.24'
+          go-version: '1.26'
 
       - name: Build CLI Binaries
         run: |
