@@ -16,7 +16,10 @@ import (
 )
 
 // ponytail: fixed datagram ceiling; upgrade only with negotiated limits, not fragmentation.
-const maxDatagram = 1100
+// Must clear ENet HOST_DEFAULT_MTU (1392) + 8 tunnel id + 10 SOCKS5 UDP header = 1410,
+// otherwise every near-MTU ENet packet is dropped and reliable UDP retransmits forever.
+// 1452 = IPv4/1500 path UDP payload ceiling. IPv6-only <1280 paths still need Mori set_mtu.
+const maxDatagram = 1452
 
 var oversize atomic.Uint64
 
@@ -264,6 +267,12 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 		u.SetReadDeadline(time.Now().Add(60 * time.Second))
 		n, from, e := u.ReadFromUDP(buf)
 		if e != nil {
+			if ne, ok := e.(net.Error); ok && ne.Timeout() {
+				// Downlink silence must not tear the association (client re-associate churn);
+				// lifetime stays bounded by the 1h conn/stream deadlines.
+				u.SetReadDeadline(time.Now().Add(60 * time.Second))
+				continue
+			}
 			return
 		}
 		if _, _, e = parsePacket(buf[:n]); e != nil {
@@ -374,6 +383,12 @@ func agentUDPTimeouts(c *quic.Conn, q *quic.Stream, allow bool, idle, lifetime t
 	for {
 		n, from, e := u.ReadFromUDP(b)
 		if e != nil {
+			if ne, ok := e.(net.Error); ok && ne.Timeout() {
+				// Keep the association alive through downlink silence; the stream
+				// lifetime deadline (or a real socket error) still ends the loop.
+				u.SetReadDeadline(time.Now().Add(idle))
+				continue
+			}
 			return
 		}
 		mu.Lock()

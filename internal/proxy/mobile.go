@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -77,18 +78,25 @@ func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insec
 	go func() {
 		defer unlock()
 		defer close(done)
+		fails := 0
 		for ctx.Err() == nil {
 			a.setStatus("Bağlanıyor")
+			start := time.Now()
 			err := runAgentStatus(ctx, address, t, token, id, 100, false, func() { a.setStatus("Bağlı") })
 			if ctx.Err() != nil {
 				break
 			}
+			if time.Since(start) > 30*time.Second {
+				fails = 0 // a healthy run resets the backoff
+			}
+			d := reconnectDelay(fails)
+			fails++
 			if err != nil {
-				a.setStatus("Bağlantı kesildi; 3 saniye sonra yeniden denenecek")
+				a.setStatus(fmt.Sprintf("Bağlantı kesildi; %v sonra yeniden denenecek", d.Round(time.Second)))
 			}
 			select {
 			case <-ctx.Done():
-			case <-time.After(3 * time.Second):
+			case <-time.After(d):
 			}
 		}
 		a.setStatus("Durduruldu")

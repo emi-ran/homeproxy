@@ -151,17 +151,24 @@ func RunCLI(args []string) error {
 				return errors.New("invalid CA")
 			}
 		}
+		fails := 0
 		for ctx.Err() == nil {
+			start := time.Now()
 			e := runAgent(ctx, *addr, t, token, *id, *priority, *allow)
 			if ctx.Err() != nil {
 				break
 			}
+			if time.Since(start) > 30*time.Second {
+				fails = 0 // a healthy run resets the backoff
+			}
+			d := reconnectDelay(fails)
+			fails++
 			if e != nil {
-				log.Printf("agent disconnected (%v); retry in 3s", e)
+				log.Printf("agent disconnected (%v); retry in %v", e, d.Round(time.Second))
 			}
 			select {
 			case <-ctx.Done():
-			case <-time.After(3 * time.Second):
+			case <-time.After(d):
 			}
 		}
 		return nil

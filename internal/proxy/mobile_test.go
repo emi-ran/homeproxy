@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,7 +62,7 @@ func TestMobileAgentWrongPinRejected(t *testing.T) {
 	for a.Status() == "Bağlanıyor" && ctx.Err() == nil {
 		time.Sleep(time.Millisecond)
 	}
-	if a.Status() != "Bağlantı kesildi; 3 saniye sonra yeniden denenecek" {
+	if !strings.HasPrefix(a.Status(), "Bağlantı kesildi; ") {
 		t.Fatal(a.Status())
 	}
 	a.Stop()

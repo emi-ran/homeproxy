@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"io"
+	"math/rand"
 	"net"
 	"sync"
 	"time"
@@ -13,9 +14,11 @@ const timeout = 10 * time.Second
 const maxSessions = 128
 
 var qc = &quic.Config{
-	EnableDatagrams:       true,
-	MaxIdleTimeout:        20 * time.Second,
-	KeepAlivePeriod:       5 * time.Second,
+	EnableDatagrams: true,
+	// 5s keepalives keep the phone radio awake with zero traffic (heat + battery).
+	// 30s > radio idle window, and idle must outlive one keepalive period.
+	MaxIdleTimeout:  90 * time.Second,
+	KeepAlivePeriod: 30 * time.Second,
 	MaxIncomingStreams:    128,
 	MaxIncomingUniStreams: -1,
 }
@@ -23,6 +26,20 @@ var qc = &quic.Config{
 type hello struct {
 	Token, ID string
 	Priority  int
+}
+
+// reconnectDelay: jittered exponential backoff, 5s base capped at 60s.
+// A fixed 3s retry re-runs a full TLS 1.3 handshake while the network is down,
+// which is the main self-inflicted heat source on the phone.
+func reconnectDelay(fails int) time.Duration {
+	d := 5 * time.Second
+	for i := 0; i < fails && d < time.Minute; i++ {
+		d *= 2
+	}
+	if d > time.Minute {
+		d = time.Minute
+	}
+	return d/2 + time.Duration(rand.Int63n(int64(d/2)+1)) // jitter in [d/2, d]
 }
 
 func socksFailure(c net.Conn, code byte) {

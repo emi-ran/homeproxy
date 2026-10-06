@@ -1,7 +1,20 @@
 // Package mobile exposes the narrow Android gomobile API. Network bytes never cross this bridge.
 package mobile
 
-import "homeproxy/internal/proxy"
+import (
+	"runtime"
+	"runtime/debug"
+
+	"homeproxy/internal/proxy"
+)
+
+// ponytail: cap the Go scheduler and halve the GC trigger so an idle phone agent
+// does not hold every (big) core awake. Upgrade path: drop this once the runtime
+// is container/cgroup-aware enough on Android to pick limits itself.
+func init() {
+	runtime.GOMAXPROCS(4)
+	debug.SetGCPercent(50)
+}
 
 type Agent struct{ core *proxy.MobileAgent }
 
