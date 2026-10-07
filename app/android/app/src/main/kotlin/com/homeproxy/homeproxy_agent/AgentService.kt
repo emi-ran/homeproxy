@@ -15,9 +15,10 @@ class AgentService : Service() {
             private set
         @Volatile var running = false
             private set
+        // Process owner: replacement services must wait for old startup AND stop.
+        private val worker = Executors.newSingleThreadExecutor()
     }
     private val agent = Mobile.newAgent()
-    private val worker = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     private var started = false
     private var failed = false
@@ -79,9 +80,9 @@ class AgentService : Service() {
         destroyed = true
         running = false
         if (!failed) publish("Durduruldu") else AgentTileService.refresh(this)
-        // Serialized after start, so a stop during setup cannot miss a later start.
+        // Shared queue also holds replacement startup until this stop completes.
         worker.execute { agent.setStatusListener(null); agent.stop() }
-        worker.shutdown()
+        // Process-lifetime worker: never shut it down from an individual service.
         super.onDestroy()
     }
     override fun onBind(intent: Intent?): IBinder? = null

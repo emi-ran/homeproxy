@@ -31,6 +31,10 @@ class TileContracts(unittest.TestCase):
         self.assertIn('override fun onStartListening()', tile)
         self.assertIn('unlockAndRun', tile)
 
+    def test_api26_minimum_explicit(self):
+        gradle = (ROOT / 'app/android/app/build.gradle.kts').read_text()
+        self.assertRegex(gradle, r'minSdk\s*=\s*26\b')
+
     def test_service_publishes_callbacks_and_lifecycle(self):
         service = (KOTLIN / 'AgentService.kt').read_text()
         self.assertIn('agent.setStatusListener', service)
