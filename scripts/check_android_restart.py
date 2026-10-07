@@ -19,6 +19,7 @@ open class Intent {
     constructor(context: Any, target: Class<*>)
     var action: String? = null
     fun setAction(value: String): Intent { action = value; return this }
+    fun putExtra(key: String, value: Any): Intent = this
     fun getStringExtra(key: String): String? = null
     fun getBooleanExtra(key: String, default: Boolean): Boolean = default
 }
@@ -116,7 +117,6 @@ import android.os.Handler
 import mobile.Mobile
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
-class MainActivity
 object R { object drawable { const val ic_tunnel = 1 } }
 object AgentTileService { fun refresh(context: Any) {} }
 fun worker(service: AgentService): ExecutorService {
@@ -134,6 +134,7 @@ fun main() {
     old.onStartCommand(Intent(), 0, 1)
     check(AgentService.running && AgentService.status == "Bağlanıyor")
     check(Mobile.entered.await(5, TimeUnit.SECONDS))
+    rejectActiveSettings()
     val oldWorker = worker(old)
     old.onDestroy()
     val replacement = AgentService()
@@ -159,17 +160,98 @@ fun main() {
     }
     Handler.drain()
     check(AgentService.running && AgentService.status == "Bağlı")
+    rejectActiveSettings()
     replacement.onDestroy()
     if (!newWorker.isShutdown) newWorker.submit {}.get(5, TimeUnit.SECONDS)
     else check(newWorker.awaitTermination(5, TimeUnit.SECONDS))
     Handler.drain()
     check(!AgentService.running && AgentService.status == "Durduruldu")
     check(Mobile.events.toList() == listOf("connect:1", "stop:1", "connect:2", "stop:2"))
-    println("PASS: delayed old startup, serialized teardown/restart, stale callback guard, final stop")
+    acceptStoppedSettings()
+    println("PASS: delayed old startup, serialized teardown/restart, stale callback guard, active settings rejection, stopped settings/start acceptance")
     kotlin.system.exitProcess(0)
 }
 ''',
 }
+
+
+STUBS.update({
+    'flutter.kt': '''package io.flutter.embedding.android
+import android.content.Intent
+import io.flutter.embedding.engine.FlutterEngine
+open class FlutterActivity {
+    var starts = 0
+    open fun configureFlutterEngine(engine: FlutterEngine) {}
+    fun checkSelfPermission(permission: String) = 0
+    fun requestPermissions(permissions: Array<String>, code: Int) {}
+    fun startForegroundService(intent: Intent) { starts++ }
+    fun stopService(intent: Intent) {}
+}
+''',
+    'engine.kt': '''package io.flutter.embedding.engine
+class FlutterEngine { val dartExecutor = Executor() }
+class Executor { val binaryMessenger = Any() }
+''',
+    'channel.kt': '''package io.flutter.plugin.common
+class MethodCall(val method: String, val arguments: Any?) {
+    fun <T> argument(key: String): T? = (arguments as? Map<String, Any?>)?.get(key) as? T
+}
+class MethodChannel(messenger: Any, name: String) {
+    interface Result {
+        fun success(value: Any?)
+        fun error(code: String, message: String?, details: Any?)
+        fun notImplemented()
+    }
+    fun setMethodCallHandler(value: (MethodCall, Result) -> Unit) { handler = value }
+    companion object { lateinit var handler: (MethodCall, Result) -> Unit }
+}
+''',
+    'platform.kt': '''package android
+object Manifest { object permission { const val POST_NOTIFICATIONS = "notifications" } }
+''',
+    'permission.kt': '''package android.content.pm
+object PackageManager { const val PERMISSION_GRANTED = 0 }
+''',
+    'settings.kt': '''package com.homeproxy.homeproxy_agent
+class AgentSettings(context: Any) {
+    fun load() = saved
+    fun save(value: Map<String, Any?>) { saved = value }
+    companion object { var saved: Map<String, Any?> = mapOf("id" to "original") }
+}
+class ChannelResult : io.flutter.plugin.common.MethodChannel.Result {
+    var succeeded = false
+    var code: String? = null
+    override fun success(value: Any?) { succeeded = true }
+    override fun error(code: String, message: String?, details: Any?) { this.code = code }
+    override fun notImplemented() { error("UNKNOWN", null, null) }
+}
+fun rejectActiveSettings() {
+    val activity = MainActivity()
+    activity.configureFlutterEngine(io.flutter.embedding.engine.FlutterEngine())
+    for (method in listOf("saveSettings", "start")) {
+        val result = ChannelResult()
+        io.flutter.plugin.common.MethodChannel.handler(
+            io.flutter.plugin.common.MethodCall(method, mapOf("id" to "replacement")), result)
+        check(!result.succeeded && result.code == "RUNNING") { "$method falsely accepted while running" }
+    }
+    check(AgentSettings.saved["id"] == "original") { "active settings overwritten" }
+    check(activity.starts == 0) { "replacement start dispatched" }
+}
+fun acceptStoppedSettings() {
+    val activity = MainActivity()
+    activity.configureFlutterEngine(io.flutter.embedding.engine.FlutterEngine())
+    for (method in listOf("saveSettings", "start")) {
+        val result = ChannelResult()
+        io.flutter.plugin.common.MethodChannel.handler(
+            io.flutter.plugin.common.MethodCall(method, mapOf("id" to "replacement")), result)
+        check(result.succeeded && result.code == null) { "$method rejected while stopped" }
+    }
+    check(AgentSettings.saved["id"] == "replacement")
+    check(activity.starts == 1)
+}
+''',
+})
+STUBS['os.kt'] += '\nobject Build { object VERSION { const val SDK_INT = 33 } }\n'
 
 
 def main():
@@ -179,7 +261,7 @@ def main():
         work = Path(tmp)
         for name, content in STUBS.items():
             (work / name).write_text(content)
-        sources = [str(SERVICE), *(str(work / name) for name in STUBS)]
+        sources = [str(SERVICE), str(SERVICE.with_name('MainActivity.kt')), *(str(work / name) for name in STUBS)]
         kotlinc = shutil.which('kotlinc')
         if kotlinc:
             compiler = [kotlinc]

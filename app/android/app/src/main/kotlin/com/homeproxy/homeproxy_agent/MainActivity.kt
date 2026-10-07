@@ -10,6 +10,12 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(engine: FlutterEngine) {
         super.configureFlutterEngine(engine)
         MethodChannel(engine.dartExecutor.binaryMessenger, "homeproxy/agent").setMethodCallHandler { call, result ->
+            // Main-thread service state: never save replacement settings or claim a
+            // new start while the current tunnel still owns its original settings.
+            if ((call.method == "saveSettings" || call.method == "start") && AgentService.running) {
+                result.error("RUNNING", "Ayarları değiştirmek veya yeniden başlatmak için önce bağlantıyı durdurun.", null)
+                return@setMethodCallHandler
+            }
             when (call.method) {
                 "loadSettings" -> {
                     try { result.success(AgentSettings(this).load()) }
