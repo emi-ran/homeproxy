@@ -25,5 +25,10 @@ func (a *Agent) Start(address, id, token, fingerprint string) error {
 func (a *Agent) StartWithTLS(address, id, token, fingerprint string, insecure bool) error {
 	return a.core.StartWithTLS(address, id, token, fingerprint, insecure)
 }
-func (a *Agent) Stop()          { a.core.Stop() }
-func (a *Agent) Status() string { return a.core.Status() }
+
+// StatusListener delivers connection changes without polling Android's UI.
+type StatusListener interface{ OnStatus(string) }
+
+func (a *Agent) SetStatusListener(listener StatusListener) { a.core.SetStatusListener(listener) }
+func (a *Agent) Stop()                                     { a.core.Stop() }
+func (a *Agent) Status() string                            { return a.core.Status() }

@@ -38,7 +38,6 @@ class MainActivity : FlutterActivity() {
                 }
                 "stop" -> {
                     stopService(Intent(this, AgentService::class.java))
-                    AgentService.status = "Durduruldu"
                     result.success(null)
                 }
                 else -> result.notImplemented()

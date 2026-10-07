@@ -17,10 +17,24 @@ import (
 
 // MobileAgent owns one cancellable tunnel independently of the UI lifecycle.
 type MobileAgent struct {
-	mu     sync.Mutex
-	cancel context.CancelFunc
-	done   chan struct{}
-	status string
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	done     chan struct{}
+	status   string
+	listener StatusListener
+}
+
+// StatusListener receives tunnel transitions; callbacks must not block.
+type StatusListener interface{ OnStatus(string) }
+
+func (a *MobileAgent) SetStatusListener(listener StatusListener) {
+	a.mu.Lock()
+	a.listener = listener
+	status := a.status
+	a.mu.Unlock()
+	if listener != nil {
+		listener.OnStatus(status)
+	}
 }
 
 func NewMobileAgent() *MobileAgent { return &MobileAgent{status: "Durduruldu"} }
@@ -104,8 +118,16 @@ func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insec
 	return nil
 }
 
-func (a *MobileAgent) setStatus(s string) { a.mu.Lock(); a.status = s; a.mu.Unlock() }
-func (a *MobileAgent) Status() string     { a.mu.Lock(); defer a.mu.Unlock(); return a.status }
+func (a *MobileAgent) setStatus(s string) {
+	a.mu.Lock()
+	a.status = s
+	listener := a.listener
+	a.mu.Unlock()
+	if listener != nil {
+		listener.OnStatus(s)
+	}
+}
+func (a *MobileAgent) Status() string { a.mu.Lock(); defer a.mu.Unlock(); return a.status }
 func (a *MobileAgent) Stop() {
 	a.mu.Lock()
 	cancel, done := a.cancel, a.done
