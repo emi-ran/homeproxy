@@ -187,7 +187,7 @@ See [Windows agent documentation](docs/WINDOWS_AGENT.md) for service commands, p
 
 ### Android
 
-The Flutter app uses a Kotlin foreground service and the Go tunnel core. It requires neither root nor a VPN profile and proxies only server-requested traffic.
+The Flutter app uses a Kotlin foreground service and the Go tunnel core. It requires **Android 8.0 (API 26) or newer on arm64**, neither root nor a VPN profile, and proxies only server-requested traffic. The current Gradle configuration signs even release APKs with the development/debug key; Actions APK artifacts are not store-ready distribution packages.
 
 1. Enter the server address, unique agent ID, shared token, and trusted certificate fingerprint.
 2. Start the agent from the app. Settings are encrypted with Android Keystore and restored on later launches; restoring settings does not automatically connect.

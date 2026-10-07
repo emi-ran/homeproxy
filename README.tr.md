@@ -187,7 +187,7 @@ Servis komutları, yetkiler, paketleme ve doğrulama sınırları: [Windows agen
 
 ### Android
 
-Flutter uygulaması Kotlin foreground service ve Go tünel çekirdeğini kullanır. Root veya VPN profili gerektirmez; yalnız sunucunun istediği proxy trafiğini taşır.
+Flutter uygulaması Kotlin foreground service ve Go tünel çekirdeğini kullanır. **Arm64 cihazda Android 8.0 (API 26) veya üzerini** gerektirir. Root veya VPN profili gerekmez; yalnız sunucunun istediği proxy trafiğini taşır. Mevcut Gradle yapılandırması release APK'ları da geliştirme/debug anahtarıyla imzalar; Actions APK artifact'ları mağaza dağıtımına hazır paketler değildir.
 
 1. Sunucu adresini, benzersiz agent ID'yi, token'ı ve güvenilir sertifika parmak izini girin.
 2. Uygulamadan agent'ı başlatın. Ayarlar Android Keystore ile şifrelenir ve sonraki açılışlarda geri yüklenir; geri yükleme otomatik bağlantı başlatmaz.

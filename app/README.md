@@ -79,11 +79,15 @@ VPN profili/root gerekmez; yalnız sunucudan gelen proxy trafiği taşınır.
 ## Derleme
 
 Flutter stable, Android SDK/NDK, Java 17+ ve mobil modül için Go 1.26 gerekir.
-Sunucu kök modülü Go 1.25 olarak kalır. Telefon hedefi Android arm64.
+Sunucu kök modülü Go 1.25 olarak kalır. Telefon hedefi Android arm64;
+uygulamanın minimum sürümü Android 8.0 / API 26'dır. AAR komutundaki
+`-androidapi 23`, uygulamanın `minSdk = 26` gereksinimini düşürmez.
 
 ```powershell
 cd mobile
-go run golang.org/x/mobile/cmd/gomobile bind -target=android/arm64 -androidapi 23 -o homeproxy.aar .
+go install golang.org/x/mobile/cmd/gobind
+$env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+go tool gomobile bind -target=android/arm64 -androidapi 23 -o homeproxy.aar .
 cd ../app
 flutter analyze
 flutter test
@@ -91,9 +95,11 @@ flutter build apk --debug --target-platform android-arm64
 adb install -r build/app/outputs/flutter-apk/app-debug.apk
 ```
 
-`gomobile` ve `gobind` araçları PATH üzerinde bulunmalıdır. Android SDK/NDK
-kurulu olmalı; `ANDROID_HOME` SDK konumunu göstermelidir. AAR Git'e eklenmez.
-APK geliştirme anahtarıyla imzalanır; mağaza/release dağıtımı değildir.
+`gomobile`, `mobile/go.mod` içindeki sabitlenmiş tool bağımlılığı üzerinden
+çalıştırılır; `gobind` PATH üzerinde bulunmalıdır. Android SDK/NDK kurulu olmalı;
+`ANDROID_HOME` SDK konumunu göstermelidir. AAR Git'e eklenmez.
+Mevcut Gradle yapılandırmasında debug ve release APK'lar geliştirme/debug
+anahtarıyla imzalanır; Actions release artifact'ı da mağaza dağıtımına hazır değildir.
 
 ## Bağlantı
 
@@ -104,7 +110,9 @@ Varsayılan sertifika pin kontrolüdür. `TLS doğrulamasını atla (insecure)`
 seçeneği kullanıcı risk onayından sonra pin gereksinimini kaldırır. TLS şifrelemesi
 kalır ancak sunucu kimliği doğrulanmaz; sahte sunucu token'ı ele geçirebilir.
 Seçenek diğer ayarlarla birlikte kaydedilir; açık olduğunda ekranda uyarı kalır.
-Değişiklik sonraki başlatmada uygulanır.
+Servis çalışırken (bağlanıyor veya bağlıyken) uygulamadan ayar kaydetme ve yeniden
+başlatma reddedilir; önce bağlantıyı durdurun. Yeni ayarlar sonraki başlatmada
+uygulanır. Başlat isteğinin kabulü, QUIC kimlik doğrulamasının tamamlandığı anlamına gelmez.
 
 Sunucu otomatik sertifikasını `server-tls.pem` olarak state dizininde saklar.
 Docker/Dokploy için `/var/lib/homeproxy` kalıcı volume'u korunmalıdır. Güvenilir
@@ -123,11 +131,19 @@ silinmez; yeniden giriş/kaydetme kullanıcı kararıdır.
 Bildirim sabit ikon kullanır ve yalnız bağlantı durumu değişince güncellenir.
 Otomatik boot/process restart yoktur.
 
+Kayıtlı ayarlarla başlatma/durdurma için HomeProxy hızlı ayarlar düğmesi
+eklenebilir. Uygulama, bildirim ve düğme aynı servisi yönetir; düğme yalnız
+kimlik doğrulanmış tünelde aktif görünür. Kullanım ve cihaz doğrulama sınırları:
+[ANDROID_QUICK_SETTINGS.md](../docs/ANDROID_QUICK_SETTINGS.md).
+
 HyperOS pil ve otomatik başlatma ayarları fiziksel test gerektirir. Foreground
 service kesintisiz çalışmayı garanti etmez. Mobil veri için Wi-Fi'yi kullanıcı
 kapatır; uygulama ağı zorlamaz. Aynı Wi-Fi dış IP kotasını paylaşabilir.
 `specialUse` mağaza yayını için ayrı policy incelemesi gerektirir.
 
-Port–agent eşlemesi henüz uygulanmadı; mevcut server routing değişmedi.
+Sunucu panelinde sabit SOCKS5 port–agent eşlemesi uygulanmıştır; eşlenmiş portun
+TCP/UDP trafiği yalnız atanmış agent'a gider, agent yoksa başka cihaza geçmez.
+Kurulum: [ana README](../README.tr.md#yönetim-paneli-ve-yönlendirme).
 Android agent mevcut QUIC/TCP/UDP ve public hedef IP korumasını kullanır.
-1100 bayt tünel datagram sınırı ve büyük paket düşürme davranışı korunur.
+Tünel datagram sınırı 8 bayt tünel başlığı dahil 1452 bayttır; SOCKS5 başlığı da
+bu bütçeden yer tüketir. Büyük paketler düşürülür; yol MTU'su ayrıca sınır koyabilir.
