@@ -9,7 +9,6 @@ import (
 	"net"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
@@ -21,21 +20,8 @@ import (
 // 1452 = IPv4/1500 path UDP payload ceiling. IPv6-only <1280 paths still need Mori set_mtu.
 const maxDatagram = 1452
 
-var oversize atomic.Uint64
-
-func sendDatagram(c *quic.Conn, id uint64, b []byte) {
-	if len(b)+8 > maxDatagram {
-		oversize.Add(1)
-		log.Print("oversize UDP dropped")
-		return
-	}
-	d := make([]byte, 8, len(b)+8)
-	binary.BigEndian.PutUint64(d, id)
-	d = append(d, b...)
-	if e := c.SendDatagram(d); e != nil {
-		oversize.Add(1)
-		log.Print("QUIC datagram dropped")
-	}
+func sendDatagram(c *quic.Conn, id uint64, b []byte, toAgent bool) {
+	udpMetrics.send(c.SendDatagram, id, b, toAgent)
 }
 
 func parsePacket(b []byte) (string, []byte, error) {
@@ -56,12 +42,10 @@ func (s *server) receiveDatagrams(p *agentPeer) {
 		if len(b) < 8 || len(b) > maxDatagram {
 			continue
 		}
+		udpMetrics.received(len(b), true)
 		id := binary.BigEndian.Uint64(b)
 		if v, ok := p.udp.Load(id); ok {
-			select {
-			case v.(chan []byte) <- b[8:]:
-			default:
-			}
+			udpMetrics.enqueue(v.(chan []byte), b[8:], true)
 		}
 	}
 }
@@ -279,18 +263,16 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 			continue
 		}
 		mu.Lock()
-		if source.Port == 0 {
-			source.IP = from.IP
+		if source.Port == 0 && from.IP.Equal(source.IP) {
 			source.Port = from.Port
-			log.Printf("serveUDP: registered client UDP endpoint as %v", from)
 		}
 		valid := from.IP.Equal(source.IP) && from.Port == source.Port
 		mu.Unlock()
 		if !valid {
-			log.Printf("serveUDP: packet dropped from unexpected source %v (expected %v)", from, source)
+			udpMetrics.sourceRejects.Add(1)
 			continue
 		}
-		sendDatagram(p.conn, id, buf[:n])
+		sendDatagram(p.conn, id, buf[:n], true)
 	}
 }
 
@@ -310,11 +292,9 @@ func agentDatagrams(c *quic.Conn) {
 		if len(b) < 8 || len(b) > maxDatagram {
 			continue
 		}
+		udpMetrics.received(len(b), false)
 		if v, ok := agentQueues.Load(udpKey{c, binary.BigEndian.Uint64(b)}); ok {
-			select {
-			case v.(chan []byte) <- b[8:]:
-			default:
-			}
+			udpMetrics.enqueue(v.(chan []byte), b[8:], false)
 		}
 	}
 }
@@ -352,15 +332,9 @@ func agentUDPTimeouts(c *quic.Conn, q *quic.Stream, allow bool, idle, lifetime t
 					continue
 				}
 				ctx, cancel := context.WithTimeout(c.Context(), timeout)
-				target, e := safeTarget(ctx, a, allow)
+				dst, e := resolveUDPTarget(ctx, a, allow, net.DefaultResolver.LookupIPAddr)
 				cancel()
 				if e != nil {
-					log.Printf("agentUDP: safeTarget rejected %s: %v", a, e)
-					continue
-				}
-				dst, e := net.ResolveUDPAddr("udp", target)
-				if e != nil {
-					log.Printf("agentUDP: resolve target %s failed: %v", target, e)
 					continue
 				}
 				mu.Lock()
@@ -400,6 +374,6 @@ func agentUDPTimeouts(c *quic.Conn, q *quic.Stream, allow bool, idle, lifetime t
 		u.SetReadDeadline(time.Now().Add(idle))
 		a, _ := encodeAddress(from.String())
 		packet := append(append([]byte{0, 0, 0}, a...), b[:n]...)
-		sendDatagram(c, key.id, packet)
+		sendDatagram(c, key.id, packet, false)
 	}
 }

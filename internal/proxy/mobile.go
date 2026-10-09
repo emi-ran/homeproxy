@@ -92,19 +92,14 @@ func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insec
 	go func() {
 		defer unlock()
 		defer close(done)
-		fails := 0
+		retry := reconnectState{}
 		for ctx.Err() == nil {
 			a.setStatus("Bağlanıyor")
-			start := time.Now()
-			err := runAgentStatus(ctx, address, t, token, id, 100, false, func() { a.setStatus("Bağlı") })
+			err := runAgentStatus(ctx, address, t, token, id, 100, false, func() { retry.authenticated = time.Now(); a.setStatus("Bağlı") })
 			if ctx.Err() != nil {
 				break
 			}
-			if time.Since(start) > 30*time.Second {
-				fails = 0 // a healthy run resets the backoff
-			}
-			d := reconnectDelay(fails)
-			fails++
+			d := retry.next(time.Now())
 			if err != nil {
 				a.setStatus(fmt.Sprintf("Bağlantı kesildi; %v sonra yeniden denenecek", d.Round(time.Second)))
 			}

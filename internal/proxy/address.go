@@ -76,20 +76,34 @@ func safeTarget(ctx context.Context, addr string, allow bool) (string, error) {
 	if e != nil || p == "0" {
 		return "", errors.New("target")
 	}
-	ips, e := net.DefaultResolver.LookupIPAddr(ctx, h)
+	ips, e := targetIPs(ctx, h, allow, net.DefaultResolver.LookupIPAddr)
 	if e != nil {
 		return "", e
 	}
+	return net.JoinHostPort(ips[0].IP.String(), p), nil
+}
+
+func targetIPs(ctx context.Context, host string, allow bool, lookup ipLookup) ([]net.IPAddr, error) {
+	var ips []net.IPAddr
+	if ip := net.ParseIP(host); ip != nil {
+		ips = []net.IPAddr{{IP: ip}}
+	} else {
+		var err error
+		ips, err = lookup(ctx, host)
+		if err != nil {
+			return nil, err
+		}
+	}
 	if len(ips) == 0 {
-		return "", errors.New("dns")
+		return nil, errors.New("dns")
 	}
 	for _, v := range ips {
 		ip := v.IP
 		v4 := ip.To4()
 		shared := v4 != nil && v4[0] == 100 && v4[1]&0xc0 == 64
 		if !allow && (shared || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified() || ip.IsMulticast() || !ip.IsGlobalUnicast()) {
-			return "", errors.New("non-public destination blocked")
+			return nil, errors.New("non-public destination blocked")
 		}
 	}
-	return net.JoinHostPort(ips[0].IP.String(), p), nil
+	return ips, nil
 }
