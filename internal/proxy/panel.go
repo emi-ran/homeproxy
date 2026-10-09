@@ -136,7 +136,7 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
-	if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/route" && r.URL.Path != "/logout" {
+	if r.URL.Path != "/" && r.URL.Path != "/login" && r.URL.Path != "/route" && r.URL.Path != "/logout" && r.URL.Path != "/udp-stats" {
 		http.NotFound(w, r)
 		return
 	}
@@ -154,6 +154,19 @@ func (p *panel) serve(w http.ResponseWriter, r *http.Request) {
 		session = cookie.Value
 	}
 	authorized := p.sessions[session].After(now)
+	if r.URL.Path == "/udp-stats" {
+		if !authorized {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(SnapshotUDPStats())
+		return
+	}
 	if r.Method == "POST" {
 		r.Body = http.MaxBytesReader(w, r.Body, 4096)
 		if err := r.ParseForm(); err != nil {
