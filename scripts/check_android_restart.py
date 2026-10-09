@@ -132,6 +132,14 @@ fun main() {
     }
     val activity = MainActivity()
     activity.configureFlutterEngine(io.flutter.embedding.engine.FlutterEngine())
+    activity.failStart = true
+    val rejected = ChannelResult()
+    io.flutter.plugin.common.MethodChannel.handler(
+        io.flutter.plugin.common.MethodCall("start", emptyMap<String, Any?>()), rejected)
+    check(rejected.code == "START" && !AgentService.running && AgentService.status == "Durduruldu") {
+        "failed dispatch leaked start reservation"
+    }
+    activity.failStart = false
     val first = ChannelResult()
     io.flutter.plugin.common.MethodChannel.handler(
         io.flutter.plugin.common.MethodCall("start", emptyMap<String, Any?>()), first)
@@ -196,10 +204,11 @@ import android.content.Intent
 import io.flutter.embedding.engine.FlutterEngine
 open class FlutterActivity {
     var starts = 0
+    var failStart = false
     open fun configureFlutterEngine(engine: FlutterEngine) {}
     fun checkSelfPermission(permission: String) = 0
     fun requestPermissions(permissions: Array<String>, code: Int) {}
-    fun startForegroundService(intent: Intent) { starts++ }
+    fun startForegroundService(intent: Intent) { if (failStart) error("dispatch denied"); starts++ }
     fun stopService(intent: Intent) {}
 }
 ''',
