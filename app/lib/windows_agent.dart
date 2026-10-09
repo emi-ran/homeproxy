@@ -25,6 +25,7 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen>
   String status = 'Durduruldu';
   String? error;
   bool busy = false, polling = false, restored = false;
+  bool refreshAfterCommand = false;
   bool configured = false, enabled = false, insecure = false;
 
   @override
@@ -127,8 +128,17 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen>
     token.text,
   );
 
-  Future<void> refresh({bool clearError = false}) async {
-    if (polling || !visible) return;
+  Future<void> refresh({
+    bool clearError = false,
+    bool commandRefresh = false,
+  }) async {
+    if (!visible) return;
+    if (busy && !commandRefresh) {
+      refreshAfterCommand = true;
+      return;
+    }
+    if (polling) return;
+    refreshAfterCommand = false;
     polling = true;
     final generation = pollGeneration;
     final before = pollView();
@@ -206,7 +216,10 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen>
     } on PlatformException catch (e) {
       if (mounted) setState(() => error = e.message ?? 'İşlem başarısız');
     } finally {
-      if (mounted) setState(() => busy = false);
+      if (mounted) {
+        setState(() => busy = false);
+        if (visible && refreshAfterCommand) await refresh();
+      }
     }
   }
 
@@ -252,7 +265,8 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen>
     if (!mounted) return;
     await run(() async {
       await channel.invokeMethod<String>('serviceCommand', action);
-      await refresh(clearError: true);
+      // The SCM call has finished; keep this command's explicit refresh.
+      await refresh(clearError: true, commandRefresh: true);
     });
   }
 
