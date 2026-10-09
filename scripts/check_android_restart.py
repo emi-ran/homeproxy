@@ -148,6 +148,10 @@ fun main() {
     rejectActiveSettings()
     val oldWorker = worker(old)
     old.onDestroy()
+    check(AgentService.running && AgentService.status == "Durduruluyor") {
+        "service claimed stopped before queued Go teardown completed"
+    }
+    rejectActiveSettings()
     val replacement = AgentService()
     replacement.onCreate()
     replacement.onStartCommand(Intent(), 0, 2)

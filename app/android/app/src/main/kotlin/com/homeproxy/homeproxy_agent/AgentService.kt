@@ -38,6 +38,7 @@ class AgentService : Service() {
     }
     private val agent = Mobile.newAgent()
     private val handler = Handler(Looper.getMainLooper())
+    private var ownerGeneration = 0L
     private var started = false
     private var failed = false
     private var destroyed = false
@@ -76,6 +77,8 @@ class AgentService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (ticket == 0L) generation++
+        ownerGeneration = generation
         pending = false
         running = true
         publish("Bağlanıyor")
@@ -102,10 +105,18 @@ class AgentService : Service() {
 
     override fun onDestroy() {
         destroyed = true
-        running = false
-        if (!failed) publish("Durduruldu") else AgentTileService.refresh(this)
+        if (started && ownerGeneration == generation) publish("Durduruluyor")
         // Shared queue also holds replacement startup until this stop completes.
-        worker.execute { agent.setStatusListener(null); agent.stop() }
+        worker.execute {
+            agent.setStatusListener(null)
+            agent.stop()
+            handler.post {
+                if (started && ownerGeneration == generation) {
+                    running = false
+                    publish(if (failed) "Agent başlatılamadı" else "Durduruldu")
+                }
+            }
+        }
         // Process-lifetime worker: never shut it down from an individual service.
         super.onDestroy()
     }
