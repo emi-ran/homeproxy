@@ -31,6 +31,7 @@ type controller struct {
 	dir        string
 	config     Config
 	configured bool
+	started    bool // Active run includes connecting and reconnect backoff.
 	agent      *proxy.MobileAgent
 	listener   net.Listener
 	failed     chan error
@@ -64,6 +65,7 @@ func newController(dir string) (*controller, error) {
 				l.Close()
 				return nil, err
 			}
+			c.started = true
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		l.Close()
@@ -73,7 +75,41 @@ func newController(dir string) (*controller, error) {
 	return c, nil
 }
 
-func (c *controller) close() { c.listener.Close(); <-c.done; c.agent.Stop() }
+func (c *controller) close() {
+	c.listener.Close()
+	<-c.done
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.agent.Stop()
+	c.started = false
+}
+
+// transitionConfig is called with mu held. Persist before disturbing a live
+// run; a failed start leaves started false so a subsequent connect can recover.
+func (c *controller) transitionConfig(desired Config) error {
+	plan, err := planConfigTransition(c.config, c.configured, desired, c.started)
+	if err != nil {
+		return err
+	}
+	if plan.Save {
+		if err := saveConfig(c.dir, plan.Config); err != nil {
+			return errors.New("cannot save encrypted settings")
+		}
+	}
+	if plan.Stop {
+		c.agent.Stop()
+		c.started = false
+	}
+	c.config, c.configured = plan.Config, true
+	if plan.Start {
+		cfg := plan.Config
+		if err := c.agent.StartWithTLS(cfg.Address, cfg.ID, cfg.Token, cfg.Fingerprint, cfg.Insecure); err != nil {
+			return errors.New("agent start failed")
+		}
+		c.started = true
+	}
+	return nil
+}
 func (c *controller) serve() {
 	defer close(c.done)
 	// Serial bounded connections avoid unbounded local goroutines. Deadline limits blocked callers.
@@ -114,22 +150,8 @@ func (c *controller) apply(r Request) Response {
 		if r.Config == nil {
 			return fail("config required")
 		}
-		cfg := *r.Config
-		if cfg.Token == "" && c.configured {
-			cfg.Token = c.config.Token
-		}
-		if err := cfg.Validate(); err != nil {
+		if err := c.transitionConfig(*r.Config); err != nil {
 			return fail(err.Error())
-		}
-		if err := saveConfig(c.dir, cfg); err != nil {
-			return fail("cannot save encrypted settings")
-		}
-		c.agent.Stop()
-		c.config, c.configured = cfg, true
-		if cfg.Enabled {
-			if err := c.agent.StartWithTLS(cfg.Address, cfg.ID, cfg.Token, cfg.Fingerprint, cfg.Insecure); err != nil {
-				return fail("agent start failed")
-			}
 		}
 	case "connect", "disconnect":
 		if !c.configured {
@@ -137,15 +159,8 @@ func (c *controller) apply(r Request) Response {
 		}
 		cfg := c.config
 		cfg.Enabled = r.Op == "connect"
-		if err := saveConfig(c.dir, cfg); err != nil {
-			return fail("cannot save encrypted settings")
-		}
-		c.agent.Stop()
-		c.config = cfg
-		if cfg.Enabled {
-			if err := c.agent.StartWithTLS(cfg.Address, cfg.ID, cfg.Token, cfg.Fingerprint, cfg.Insecure); err != nil {
-				return fail("agent start failed")
-			}
+		if err := c.transitionConfig(cfg); err != nil {
+			return fail(err.Error())
 		}
 	default:
 		return fail("unknown operation")
