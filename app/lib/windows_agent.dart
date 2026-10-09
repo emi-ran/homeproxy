@@ -10,7 +10,8 @@ class WindowsAgentScreen extends StatefulWidget {
   State<WindowsAgentScreen> createState() => _WindowsAgentScreenState();
 }
 
-class _WindowsAgentScreenState extends State<WindowsAgentScreen> {
+class _WindowsAgentScreenState extends State<WindowsAgentScreen>
+    with WidgetsBindingObserver {
   static const channel = MethodChannel('homeproxy/windows');
   final address = TextEditingController();
   final id = TextEditingController(text: 'ev-pc');
@@ -18,6 +19,8 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen> {
   final fingerprint = TextEditingController();
   final form = GlobalKey<FormState>();
   Timer? timer;
+  bool visible = true;
+  int pollGeneration = 0;
   String service = 'loading';
   String status = 'Durduruldu';
   String? error;
@@ -27,10 +30,30 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    visible =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+    startPolling();
+  }
+
+  void startPolling() {
+    if (!visible) return;
     refresh();
     timer = Timer.periodic(const Duration(seconds: 2), (_) {
       if (!busy && !polling) refresh();
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final next = state == AppLifecycleState.resumed;
+    if (visible == next) return;
+    visible = next;
+    pollGeneration++;
+    timer?.cancel();
+    timer = null;
+    if (visible && !polling) startPolling();
   }
 
   Future<Map<String, dynamic>> request(
@@ -91,16 +114,31 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen> {
     }
   }
 
+  Object pollView() => (
+    service,
+    status,
+    error,
+    configured,
+    enabled,
+    insecure,
+    address.text,
+    id.text,
+    fingerprint.text,
+    token.text,
+  );
+
   Future<void> refresh({bool clearError = false}) async {
-    if (polling) return;
+    if (polling || !visible) return;
     polling = true;
+    final generation = pollGeneration;
+    final before = pollView();
     try {
       final state = await channel.invokeMethod<String>('serviceStatus');
-      if (!mounted) return;
-      service = state ?? 'unknown';
-      if (service == 'running') {
+      if (!mounted || !visible || generation != pollGeneration) return;
+      final nextService = state ?? 'unknown';
+      if (nextService == 'running') {
         final response = await request('status');
-        if (!mounted) return;
+        if (!mounted || !visible || generation != pollGeneration) return;
         applyResponse(response, restore: !restored);
         restored = true;
       } else {
@@ -108,13 +146,21 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen> {
         // unsaved edits during routine polling while it stays running.
         restored = false;
       }
+      service = nextService;
       if (clearError) error = null;
     } on PlatformException catch (e) {
-      if (mounted) error = e.message ?? 'Windows servisine erişilemiyor';
+      if (!mounted || !visible || generation != pollGeneration) return;
+      error = e.message ?? 'Windows servisine erişilemiyor';
       if (service == 'loading') service = 'unknown';
     } finally {
       polling = false;
-      if (mounted) setState(() {});
+      if (mounted && visible) {
+        if (generation == pollGeneration) {
+          if (pollView() != before) setState(() {});
+        } else {
+          startPolling();
+        }
+      }
     }
   }
 
@@ -240,6 +286,7 @@ class _WindowsAgentScreenState extends State<WindowsAgentScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     timer?.cancel();
     for (final controller in [address, id, token, fingerprint]) {
       controller.dispose();
