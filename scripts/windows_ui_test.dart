@@ -8,6 +8,39 @@ import 'package:flutter_test/flutter_test.dart';
 import '../app/lib/windows_agent.dart';
 
 void main() {
+  testWidgets('stale pipe reply is ignored and resume never overlaps polls', (
+    tester,
+  ) async {
+    final pending = Completer<String>();
+    var requests = 0;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      const MethodChannel('homeproxy/windows'),
+      (call) async {
+        if (call.method == 'serviceStatus') return 'running';
+        requests++;
+        if (requests == 1) return pending.future;
+        return jsonEncode({'version': 1, 'ok': true, 'status': 'fresh'});
+      },
+    );
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpWidget(const MaterialApp(home: WindowsAgentScreen()));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+    expect(requests, 1);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    pending.complete(jsonEncode({'version': 1, 'ok': true, 'status': 'stale'}));
+    await tester.pump();
+    expect(find.text('Tünel: stale'), findsNothing);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(requests, 2);
+    expect(find.text('Tünel: fresh'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('unchanged Windows status preserves widget identity', (
     tester,
   ) async {
