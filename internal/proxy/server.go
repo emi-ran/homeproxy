@@ -133,18 +133,17 @@ func (s *server) listenSOCKS(ctx context.Context, addr string) (string, error) {
 func (s *server) serveSOCKSListener(ctx context.Context, l net.Listener) {
 	go func() { <-ctx.Done(); l.Close() }()
 	go func() {
-		slots := make(chan struct{}, maxSessions)
 		for {
 			c, e := l.Accept()
 			if e != nil {
 				return
 			}
-			select {
-			case slots <- struct{}{}:
-				go func() { defer func() { <-slots }(); s.handleSOCKS(ctx, c) }()
-			default:
+			release, ok := s.admit(nil)
+			if !ok {
 				c.Close()
+				continue
 			}
+			go func() { defer release(); s.handleSOCKS(ctx, c) }()
 		}
 	}()
 }
@@ -186,6 +185,12 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 		c.Write([]byte{5, 1, 0, 1, 0, 0, 0, 0, 0, 0})
 		return
 	}
+	release, admitted := s.admit(p)
+	if !admitted {
+		socksFailure(c, 1)
+		return
+	}
+	defer release()
 	if b[1] == 3 {
 		log.Printf("socks: UDP ASSOCIATE requested from %v (addr=%s)", c.RemoteAddr(), addr)
 		s.serveUDP(ctx, c, p, addr)

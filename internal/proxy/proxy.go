@@ -12,6 +12,7 @@ type agentPeer struct {
 	priority int
 	conn     *quic.Conn
 	udp      sync.Map
+	sessions int // guarded by server.mu
 }
 
 type server struct {
@@ -20,6 +21,7 @@ type server struct {
 	agents                map[string]*agentPeer
 	routes                map[string]string
 	maxAgents             int
+	sessions              int
 }
 
 func newServer(token, mode string) *server {
