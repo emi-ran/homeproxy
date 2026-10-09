@@ -43,8 +43,16 @@ func RunCLI(args []string) error {
 	admin := f.String("admin-socket", "/run/homeproxy/admin.sock", "local Unix management socket")
 	allow := f.Bool("allow-private", false, "DANGER: permit agent private destinations; test fixtures only")
 	insecure := f.Bool("insecure", false, "skip TLS certificate verification on agent (for self-signed server cert)")
+	lifetime := f.String("session-lifetime", "1h", "hard TCP/UDP session lifetime, positive and at most 24h; configure both endpoints")
 	if e := f.Parse(args[1:]); e != nil {
 		return e
+	}
+	duration, err := time.ParseDuration(*lifetime)
+	if err != nil {
+		return errors.New("invalid session lifetime duration")
+	}
+	if err := validateSessionLifetime(duration); err != nil {
+		return err
 	}
 	token := os.Getenv("HOMEPROXY_TOKEN")
 	if *tokenFlag != "" {
@@ -62,6 +70,7 @@ func RunCLI(args []string) error {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	ctx = context.WithValue(ctx, lifetimeKey{}, duration)
 	switch role {
 	case "server":
 		maxAgents, err := maxAgentsFromEnv()

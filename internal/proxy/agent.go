@@ -51,11 +51,15 @@ func runAgentStatus(ctx context.Context, addr string, t *tls.Config, token, id s
 		if e != nil {
 			return e
 		}
-		go agentSession(c, q, allow)
+		go agentSessionLifetime(c, q, allow, sessionLifetime(ctx))
 	}
 }
 
 func agentSession(c *quic.Conn, q *quic.Stream, allow bool) {
+	agentSessionLifetime(c, q, allow, defaultSessionLifetime)
+}
+
+func agentSessionLifetime(c *quic.Conn, q *quic.Stream, allow bool, lifetime time.Duration) {
 	q.SetDeadline(time.Now().Add(timeout))
 	b := make([]byte, 1)
 	if _, e := io.ReadFull(q, b); e != nil {
@@ -64,7 +68,7 @@ func agentSession(c *quic.Conn, q *quic.Stream, allow bool) {
 		return
 	}
 	if b[0] == 3 {
-		agentUDP(c, q, allow)
+		agentUDPTimeouts(c, q, allow, 60*time.Second, lifetime)
 		return
 	}
 	if b[0] != 1 {
@@ -110,6 +114,6 @@ func agentSession(c *quic.Conn, q *quic.Stream, allow bool) {
 		case <-done:
 		}
 	}()
-	bridge(dst, q)
+	bridgeLifetime(dst, q, lifetime)
 	close(done)
 }

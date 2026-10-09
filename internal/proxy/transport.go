@@ -17,8 +17,8 @@ var qc = &quic.Config{
 	EnableDatagrams: true,
 	// 5s keepalives keep the phone radio awake with zero traffic (heat + battery).
 	// 30s > radio idle window, and idle must outlive one keepalive period.
-	MaxIdleTimeout:  90 * time.Second,
-	KeepAlivePeriod: 30 * time.Second,
+	MaxIdleTimeout:        90 * time.Second,
+	KeepAlivePeriod:       30 * time.Second,
 	MaxIncomingStreams:    128,
 	MaxIncomingUniStreams: -1,
 }
@@ -48,9 +48,14 @@ func socksFailure(c net.Conn, code byte) {
 }
 
 func bridge(c net.Conn, q *quic.Stream) {
-	// ponytail: one-hour hard lifetime, not sliding idle timeout.
-	c.SetDeadline(time.Now().Add(time.Hour))
-	q.SetDeadline(time.Now().Add(time.Hour))
+	bridgeLifetime(c, q, defaultSessionLifetime)
+}
+
+func bridgeLifetime(c net.Conn, q *quic.Stream, lifetime time.Duration) {
+	// Hard lifetime, not a sliding idle timeout.
+	deadline := time.Now().Add(lifetime)
+	c.SetDeadline(deadline)
+	q.SetDeadline(deadline)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	abort := func() {

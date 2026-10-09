@@ -180,7 +180,7 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 	if _, e = io.ReadFull(q, b); e != nil || b[0] != 0 {
 		return
 	}
-	q.SetDeadline(time.Now().Add(time.Hour))
+	q.SetDeadline(time.Now().Add(sessionLifetime(ctx)))
 	id := uint64(q.StreamID())
 	queue := make(chan []byte, 32)
 	p.udp.Store(id, queue)
@@ -201,7 +201,7 @@ func (s *server) serveUDP(ctx context.Context, c net.Conn, p *agentPeer, addr st
 	}
 	log.Printf("serveUDP: association established for client %v, relay listening at %s", remote, bndAddr)
 
-	c.SetDeadline(time.Now().Add(time.Hour))
+	c.SetDeadline(time.Now().Add(sessionLifetime(ctx)))
 	defer c.Close()
 	done := make(chan struct{})
 	defer close(done)

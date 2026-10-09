@@ -255,6 +255,6 @@ func (s *server) handleSOCKS(ctx context.Context, c net.Conn) {
 		case <-done:
 		}
 	}()
-	bridge(c, q)
+	bridgeLifetime(c, q, sessionLifetime(ctx))
 	close(done)
 }

@@ -46,6 +46,15 @@ func (a *MobileAgent) Start(address, id, token, fingerprint string) error {
 
 // StartWithTLS permits unverified TLS only when explicitly requested by the user.
 func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insecure bool) error {
+	return a.StartWithTLSAndLifetime(address, id, token, fingerprint, insecure, 3600)
+}
+
+// StartWithTLSAndLifetime sets a per-run hard session cap in seconds (1–86400).
+// Both endpoints enforce their own cap; this does not negotiate or migrate sessions.
+func (a *MobileAgent) StartWithTLSAndLifetime(address, id, token, fingerprint string, insecure bool, seconds int64) error {
+	if seconds < 1 || seconds > 86400 {
+		return errors.New("session lifetime must be 1–86400 seconds")
+	}
 	host, port, err := net.SplitHostPort(address)
 	n, portErr := strconv.Atoi(port)
 	if err != nil || host == "" || portErr != nil || n < 1 || n > 65535 {
@@ -70,7 +79,7 @@ func (a *MobileAgent) StartWithTLS(address, id, token, fingerprint string, insec
 	if !ok {
 		return errors.New("agent ID already running or instance lock unavailable")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), lifetimeKey{}, time.Duration(seconds)*time.Second))
 	a.cancel, a.done, a.status = cancel, make(chan struct{}), "Bağlanıyor"
 	done := a.done
 	t := &tls.Config{MinVersion: tls.VersionTLS13, NextProtos: []string{"homeproxy/1"}, InsecureSkipVerify: true,
