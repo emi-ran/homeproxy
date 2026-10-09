@@ -1,0 +1,56 @@
+# Network optimization investigation
+
+## Evidence before fixes (202ccfa)
+
+Source inspection: UDP source port learning in udp.go overwrites the TCP peer IP on the first syntactically valid datagram; a different-IP sender can hijack an unspecified-port association. Malformed packets are already rejected before learning.
+
+Agent UDP executes safeTarget then ResolveUDPAddr on every packet. safeTarget checks every DNS answer and returns a numeric address; the second resolution is redundant. Plan: direct numeric UDPAddr construction and injectable all-answer resolver; no domain cache, because preserving fresh all-answer validation is preferable to accepting stale policy decisions. No DNS TTL is available from LookupIPAddr.
+
+Application association receive queues are 32 each, silently dropping on saturation. quic-go v0.54.1 datagram_queue.go uses a connection-shared send queue of 32 (Add blocks), receive queue of 128 (drops on saturation). Fifteen bots sharing an agent compete for these connection queues and congestion control; they do not each get a separate QUIC send budget. Growing buffers without burst/latency measurements is not justified.
+
+SendDatagram uses min(peer frame limit, current MTU payload estimate), not the application ceiling. QUIC packet encryption, headers, DATAGRAM frame and tunnel ID consume space. The 1452 application ceiling is not proof that a 1410 tunnel payload fits the current path. Upstream can drop queued frames if packet size shrinks; these internal losses are not visible at our enqueue boundary. Plan: retain ceiling and wire protocol; distinguish local oversize from negotiated/path-limit errors and record the limit.
+
+Retry loops currently measure entire attempt duration including dial/auth, erroneously resetting after a slow failed attempt. Plan: share authenticated-duration backoff state between CLI and mobile.
+
+## Planned changes
+
+Immutable TCP peer IP while learning UDP port; numeric fast path without weakening private/shared-address policy; internal atomic snapshot with distinct queue/error/direction counters and enqueue duration; authenticated-only reconnect reset. No public metrics, per-packet logs, fragmentation, TLS bypass, lifetime/buffer changes, live actions, builds/CI or commits.
+
+## Applied changes and verification
+
+Applied immutable source-IP port learning, shared numeric/all-answer target validation with direct UDPAddr construction, internal atomic UDP snapshots, and shared authenticated-duration retry state for CLI/mobile. Domain caching deliberately omitted: fresh all-answer checking and selected numeric IP eliminate a second DNS lookup/rebinding window without stale validation. Removed per-packet drop/rejection logs. No extra allocation tuning, buffer changes, fragmentation or ceiling changes.
+
+Serial test environment: `/home/hermes/toolchains/go/bin/go`, `GOMAXPROCS=2 GOFLAGS=-p=1`. Red evidence: foreign valid source regression timed out after malicious 127.0.0.2 pinned the association; numeric test initially reported resolver calls=1; DNS revalidation test rejected unchecked/stale answers; retry test reported failure count 7 rather than healthy reset 1; stats tests initially reported zero loss/receive counters. Each narrow slice subsequently passed. New API tests first encountered missing symbols, then used minimal scaffolds to obtain behavioral red failures before implementation.
+
+Final narrow tests passed, including both traffic directions, queue saturation, oversize bypass, typed QUIC size error and other error separation. Real localhost QUIC probe observed **1243 bytes** maximum SendDatagram payload immediately after handshake versus application ceiling 1452. This is current local path/negotiation evidence, not a universal permanent limit. A 1410-byte tunneled packet can fail before MTU discovery and on smaller remote paths. Remaining: remote negotiated/path MTU observations and client MTU alignment design; no safe transparent generic UDP fragmentation exists here.
+
+Full root `go test ./... -count=1` ran twice serialized: proxy package passed (22.097s, then 22.113s); cmd has no tests; overall suite blocked by concurrently appearing unrelated `internal/windowsagent/config_transition_test.go` referencing undefined `planConfigTransition` (lines 56,87). That file was not created/modified by this task and was absent at initial clean status. Do not attribute its changes to the network patch. `git diff --check` passed. QUIC emitted the existing host UDP receive-buffer warning (416 KiB achieved versus requested 7168 KiB); no host tuning was performed. No race/full build/Android/CI/live actions/commits.
+
+## Review-gap closure and MTU investigation (2026-10-09)
+
+- `internal/proxy/udp_stats_test.go`: immediate localhost probe is diagnostic and accepts either successful enqueue or typed size rejection; unexpected errors still fail. Separate wrapped typed-error accounting test asserts 1410-byte attempted tunnel payload, limit 1243, one size rejection and no successful traffic. Overlay mutation disabling size-error classification failed with SendTooLarge=0 / SendOtherErrors=1; unchanged source passed. An earlier exploratory mutation using errors.Is with a nil typed target panicked and was discarded; neither mutation changed repository code.
+- `internal/proxy/network_optimization_test.go`: replaced arbitrary 30ms wait with observation of a new atomic `SourceRejects` counter after valid-source rejection. Red: missing observation failed before adding counter. Green: 10 repeated source tests passed. Go overlay restoring unconditional foreign-source port learning (while retaining observation) failed all 3 runs at the good sender read timeout, proving the baseline defect without racing the malicious packet. Scratch overlays live under `$TMPDIR/homeproxy-source-pin-red` and `$TMPDIR/homeproxy-typed-size-red`; not repository artifacts.
+- Serial root tests now pass: `go test -count=1 ./...` proxy 22.632s, windowsagent 0.010s; `go test -race -count=1 ./...` proxy 25.105s, windowsagent 1.025s; `go vet ./...` succeeded. `git diff --check` passed. Existing host receive-buffer warning remains; no host tuning.
+
+### Actual transport evidence and safe boundary
+
+`TestQUICNearMTUDeliveryDiagnostic` uses unchanged shared QUIC configuration, sends small bidirectional datagrams for approximately 0.5s, then verifies actual intact 1410-byte ReceiveDatagram in each direction. Both directions delivered locally. Immediate post-handshake diagnostic still reported 1243. Thus 1243 is not a permanent localhost ceiling; delayed PMTU discovery is material. This is a diagnostic, deliberately not a portable assertion that every path supports 1410.
+
+Inspected cached quic-go v0.54.1 sources: `interface.go:174-183` defines InitialPacketSize as a **lower limit** and explicitly warns a high value can time out the handshake; `config.go:103-106` keeps library default when unset. `connection.go:858-859` starts discovery only after confirmed handshake and DF capability; `mtu_discoverer.go:150-176` waits five smoothed RTTs before probes; `198-249` raises the proven minimum only on ACK and narrows search after probe losses. `connection.go:2613-2630` SendDatagram checks current estimate and peer frame limit, then queues rather than guarantees delivery. `switchToNewPath` resets discovery to configured initial size. No public config enables transparent large-datagram delivery on genuinely smaller paths. Arbitrarily raising InitialPacketSize removes the lower-path handshake safety margin; it is not a fallback solution.
+
+**No MTU production change made.** A true low-MTU path cannot carry a 1410-byte DATAGRAM plus QUIC overhead in one packet. Under the constraints (no application fragmentation, no Mori MTU change, no near-MTU drop workaround, no stream/HOL performance tradeoff), universal near-MTU delivery is impossible. PMTU warmup only solves capable paths and does not prove mobile path-change safety.
+
+Bounded next work, before any MTU implementation:
+1. Add a test-only bidirectional UDP forwarding harness that blackholes packets over chosen UDP payload ceilings (1200/1280/1452), preserving original production configuration; assert handshake and small datagram delivery on low paths.
+2. Record transport UpdatedMTU events and datagram delivery, not only enqueue acceptance; test both directions, early 1410 attempts, post-discovery 1410, and a mid-connection high-to-low ceiling transition. Separate genuine low-path impossibility from discovery delay.
+3. If capable-path startup is the only remaining defect, design a bounded pre-association discovery/readiness gate with cancellation and explicit unsupported-path error, and write failing gate tests first. This adds startup latency and cannot satisfy unchanged 1410 traffic on low paths. Require user decision on unsupported paths versus client MTU adaptation/alternative transport before implementation. Do not introduce retry-spam, arbitrary packet enlargement, or unbounded buffering.
+
+### Windows read-only lifecycle review
+
+`config_transition.go` and `ipc_windows.go` preserve redacted token, normalize fingerprint, persist before stop, distinguish active reconnect from saved Enabled, and leave started=false after failed start. No new definite lifecycle regression found. `controller.close` waits for serial serve loop; an accepted idle pipe can delay shutdown up to its 5s deadline, and synchronous Stop/start/file persistence are not bounded by that pipe deadline. Existing shutdown latency is a review concern, not a demonstrated deadlock. Linux helper tests and race tests passed; Windows-tagged IPC, DPAPI, service and actual Windows runtime remain uncompiled/unverified because Windows builds were forbidden. No Windows source changes in this follow-up.
+
+## Snapshot consumption and limits
+
+Call `proxy.SnapshotUDPStats()` from code inside this module (proxy is an internal package); no HTTP/public metrics endpoint is registered. Poll at a coarse interval and compute deltas externally; do not add per-packet logging. Counters are process-global and individually atomic, not transactionally consistent. `ToAgent*` / `ToServer*` count successful QUIC enqueue packets and bytes including the 8-byte tunnel ID, not network delivery or wire bandwidth. `AtAgent*` / `AtServer*` count valid-sized datagrams dequeued from QUIC before association lookup. `ServerQueueDrops` / `AgentQueueDrops` count only full application association queues. `LocalOversize`, `SendTooLarge` (with LastMaxPayload from the typed negotiated/current-path error), and `SendOtherErrors` are disjoint. `SendCalls` and aggregate `SendNanoseconds` measure library SendDatagram call duration including shared queue blocking; local oversize never calls it.
+
+Not measured: QUIC internal receive queue loss, packets lost after enqueue, malformed/destination-policy rejections, UDP kernel drops, delivery latency, actual wire overhead, radio use or 15-bot production workload. Valid foreign-source rejections are now counted as `SourceRejects`. A nil SendDatagram error does not guarantee delivery. No benchmark/performance-loss/traffic-reduction guarantee is made. TLS, destination policy, queue limits, 30s/90s keepalive/idle and one-hour hard lifetimes remain intact. Source-only changes are not deployed evidence.
