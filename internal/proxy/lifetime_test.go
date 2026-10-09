@@ -9,21 +9,35 @@ import (
 	"time"
 )
 
-func TestConfiguredServerLifetimeClosesTCP(t *testing.T) {
+func TestConfiguredLifetimeClosesTCP(t *testing.T) {
+	for _, side := range []string{"server", "agent"} {
+		t.Run(side, func(t *testing.T) {
+			testConfiguredTCPLifetime(t, side)
+		})
+	}
+}
+
+func testConfiguredTCPLifetime(t *testing.T, side string) {
 	st, ct := testTLS(t)
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), lifetimeKey{}, 80*time.Millisecond))
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	// Only the endpoint under test gets a short cap; the peer stays at 1h.
+	serverCtx, agentCtx := ctx, ctx
+	if side == "server" {
+		serverCtx = context.WithValue(ctx, lifetimeKey{}, 80*time.Millisecond)
+	} else {
+		agentCtx = context.WithValue(ctx, lifetimeKey{}, 80*time.Millisecond)
+	}
 	s := newServer("secret", "priority")
-	qa, err := s.listenQUIC(ctx, "127.0.0.1:0", st)
+	qa, err := s.listenQUIC(serverCtx, "127.0.0.1:0", st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sa, err := s.listenSOCKS(ctx, "127.0.0.1:0")
+	sa, err := s.listenSOCKS(serverCtx, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Leave the agent at its default cap so this verifies server ownership.
-	go runAgent(context.WithValue(ctx, lifetimeKey{}, defaultSessionLifetime), qa, ct, "secret", "a", 1, true)
+	go runAgent(agentCtx, qa, ct, "secret", "a", 1, true)
 	waitAgents(t, s, 1)
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
