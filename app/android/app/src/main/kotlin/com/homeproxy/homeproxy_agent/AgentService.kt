@@ -74,7 +74,8 @@ class AgentService : Service() {
         if (started) return START_NOT_STICKY
         val ticket = intent.getLongExtra("generation", 0L)
         if (ticket != 0L && (!pending || ticket != generation)) {
-            stopSelf()
+            // A canceled dispatch must not stop a newer accepted reservation.
+            if (!pending) stopSelf(startId)
             return START_NOT_STICKY
         }
         if (ticket == 0L) generation++

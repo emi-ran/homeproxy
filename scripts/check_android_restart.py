@@ -23,8 +23,9 @@ open class Context {
         if (failStart) error("dispatch denied")
         starts++
         dispatched = intent
+        android.app.Lifecycle.enqueue(intent)
     }
-    fun stopService(intent: Intent) { stops++ }
+    fun stopService(intent: Intent) { stops++; android.app.Lifecycle.stop() }
 }
 class ComponentName(context: Context, type: Class<*>)
 open class Intent {
@@ -63,10 +64,33 @@ open class Service : android.content.Context() {
     open fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = 0
     open fun onDestroy() {}
     open fun onBind(intent: Intent?): IBinder? = null
-    fun stopSelf() {}
+    fun stopSelf() { Lifecycle.stop(this) }
+    fun stopSelf(startId: Int) { Lifecycle.stop(this, startId) }
     fun startForeground(id: Int, notification: Notification) {}
     fun <T> getSystemService(type: Class<T>): T = type.getDeclaredConstructor().newInstance()
     companion object { const val START_NOT_STICKY = 2 }
+}
+
+// Deterministic started-service model: queued intents have assigned start IDs.
+object Lifecycle {
+    val queue = mutableListOf<Pair<Int, Intent>>()
+    var current: Service? = null
+    var latest = 0
+    fun enqueue(intent: Intent) { queue.add(++latest to intent) }
+    fun deliver(): Service {
+        val (id, intent) = queue.removeAt(0)
+        val service = current ?: com.homeproxy.homeproxy_agent.AgentService().also {
+            current = it; it.onCreate()
+        }
+        service.onStartCommand(intent, 0, id)
+        return service
+    }
+    fun stop(service: Service? = current, id: Int? = null) {
+        if (service != null && service === current && (id == null || id == latest)) {
+            current = null
+            service.onDestroy()
+        }
+    }
 }
 class PendingIntent { companion object {
     const val FLAG_IMMUTABLE = 1
@@ -165,14 +189,28 @@ fun main() {
         "accepted start was not reserved before service dispatch"
     }
     rejectActiveSettings()
-    val old = AgentService()
-    old.onCreate()
-    old.onStartCommand(Intent(), 0, 1)
+    // A was queued but canceled before Android created the service. B is accepted.
+    AgentService.cancelPendingStart()
+    activity.configureFlutterEngine(io.flutter.embedding.engine.FlutterEngine())
+    val second = ChannelResult()
+    io.flutter.plugin.common.MethodChannel.handler(
+        io.flutter.plugin.common.MethodCall("start", emptyMap<String, Any?>()), second)
+    check(second.succeeded)
+    val ticketB = activity.dispatched!!.getLongExtra("generation", 0)
+    check(ticketB != 0L) { "app dispatched zero-generation shortcut" }
+    val staleA = android.app.Lifecycle.deliver()
+    check(android.app.Lifecycle.current === staleA) {
+        "stale A stopped service while accepted B was queued"
+    }
+    check(AgentService.running) { "stale A cleared B reservation" }
+    val old = android.app.Lifecycle.deliver() as AgentService
+    check(old === staleA) { "B delivered to destroyed instance" }
+    check(activity.dispatched!!.getLongExtra("generation", 0) == ticketB)
     check(AgentService.running && AgentService.status == "Bağlanıyor")
     check(Mobile.entered.await(5, TimeUnit.SECONDS))
     rejectActiveSettings()
     val oldWorker = worker(old)
-    old.onDestroy()
+    android.app.Lifecycle.stop(old)
     check(AgentService.running && AgentService.status == "Durduruluyor") {
         "service claimed stopped before queued Go teardown completed"
     }
