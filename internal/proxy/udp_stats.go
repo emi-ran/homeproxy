@@ -39,7 +39,8 @@ func (s *udpStats) received(n int, server bool) {
 
 var udpMetrics udpStats
 
-// SnapshotUDPStats is internal/local consumption only; no network endpoint is registered.
+// SnapshotUDPStats supplies process counters to internal consumers and the
+// authenticated panel; there is no unauthenticated metrics listener.
 func SnapshotUDPStats() UDPStatsSnapshot { return udpMetrics.snapshot() }
 func (s *udpStats) snapshot() UDPStatsSnapshot {
 	return UDPStatsSnapshot{
