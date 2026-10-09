@@ -33,7 +33,7 @@ class AgentScreen extends StatefulWidget {
   State<AgentScreen> createState() => _AgentScreenState();
 }
 
-class _AgentScreenState extends State<AgentScreen> {
+class _AgentScreenState extends State<AgentScreen> with WidgetsBindingObserver {
   static const channel = MethodChannel('homeproxy/agent');
   final address = TextEditingController();
   final id = TextEditingController(text: 'telefon');
@@ -104,17 +104,52 @@ class _AgentScreenState extends State<AgentScreen> {
   @override
   void initState() {
     super.initState();
-    timer = Timer.periodic(const Duration(seconds: 1), (_) => refresh());
-    refresh();
+    WidgetsBinding.instance.addObserver(this);
+    didChangeAppLifecycleState(
+      WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+    );
     loadSettings();
   }
 
+  bool resumed = false;
+  bool refreshing = false;
+  int pollGeneration = 0;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    resumed = state == AppLifecycleState.resumed;
+    pollGeneration++;
+    timer?.cancel();
+    timer = null;
+    if (resumed) {
+      refresh();
+      timer = Timer.periodic(const Duration(seconds: 1), (_) => refresh());
+    }
+  }
+
   Future<void> refresh() async {
+    if (!resumed || refreshing) return;
+    refreshing = true;
+    final generation = pollGeneration;
     try {
       final value = await channel.invokeMethod<String>('status');
-      if (mounted) setState(() => status = value ?? 'Durduruldu');
+      final next = value ?? 'Durduruldu';
+      if (mounted &&
+          resumed &&
+          generation == pollGeneration &&
+          next != status) {
+        setState(() => status = next);
+      }
     } on PlatformException catch (_) {
-      if (mounted) setState(() => error = 'Android servisine erişilemiyor');
+      if (mounted &&
+          resumed &&
+          generation == pollGeneration &&
+          error != 'Android servisine erişilemiyor') {
+        setState(() => error = 'Android servisine erişilemiyor');
+      }
+    } finally {
+      refreshing = false;
+      if (mounted && resumed && generation != pollGeneration) refresh();
     }
   }
 
@@ -140,6 +175,9 @@ class _AgentScreenState extends State<AgentScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    resumed = false;
+    pollGeneration++;
     timer?.cancel();
     for (final controller in [address, id, token, fingerprint]) {
       controller.dispose();
