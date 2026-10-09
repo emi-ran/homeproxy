@@ -53,6 +53,7 @@ class AgentTileService : TileService() {
     private fun toggle() {
         if (AgentService.running) {
             AgentService.cancelPendingStart()
+            refresh(this)
             stopService(Intent(this, AgentService::class.java))
             return
         }

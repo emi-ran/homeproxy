@@ -14,13 +14,29 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICE = ROOT / 'app/android/app/src/main/kotlin/com/homeproxy/homeproxy_agent/AgentService.kt'
 STUBS = {
     'content.kt': '''package android.content
+open class Context {
+    var starts = 0
+    var stops = 0
+    var failStart = false
+    var dispatched: Intent? = null
+    fun startForegroundService(intent: Intent) {
+        if (failStart) error("dispatch denied")
+        starts++
+        dispatched = intent
+    }
+    fun stopService(intent: Intent) { stops++ }
+}
+class ComponentName(context: Context, type: Class<*>)
 open class Intent {
     constructor()
     constructor(context: Any, target: Class<*>)
     var action: String? = null
     fun setAction(value: String): Intent { action = value; return this }
-    fun putExtra(key: String, value: Any): Intent = this
-    fun getLongExtra(key: String, default: Long): Long = default
+    private val extras = mutableMapOf<String, Any>()
+    fun putExtra(key: String, value: Any): Intent { extras[key] = value; return this }
+    fun getLongExtra(key: String, default: Long): Long = extras[key] as? Long ?: default
+    fun addFlags(flags: Int): Intent = this
+    companion object { const val FLAG_ACTIVITY_NEW_TASK = 1 }
     fun getStringExtra(key: String): String? = null
     fun getBooleanExtra(key: String, default: Boolean): Boolean = default
 }
@@ -42,7 +58,7 @@ class Handler(looper: Looper) {
     'app.kt': '''package android.app
 import android.content.Intent
 import android.os.IBinder
-open class Service {
+open class Service : android.content.Context() {
     open fun onCreate() {}
     open fun onStartCommand(intent: Intent?, flags: Int, startId: Int) = 0
     open fun onDestroy() {}
@@ -54,6 +70,7 @@ open class Service {
 }
 class PendingIntent { companion object {
     const val FLAG_IMMUTABLE = 1
+    const val FLAG_UPDATE_CURRENT = 2
     fun getActivity(context: Any, code: Int, intent: Intent, flags: Int) = PendingIntent()
     fun getService(context: Any, code: Int, intent: Intent, flags: Int) = PendingIntent()
 } }
@@ -119,7 +136,7 @@ import mobile.Mobile
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
 object R { object drawable { const val ic_tunnel = 1 } }
-object AgentTileService { fun refresh(context: Any) {} }
+
 fun worker(service: AgentService): ExecutorService {
     val field = AgentService::class.java.getDeclaredField("worker")
     field.isAccessible = true
@@ -191,6 +208,27 @@ fun main() {
     check(!AgentService.running && AgentService.status == "Durduruldu")
     check(Mobile.events.toList() == listOf("connect:1", "stop:1", "connect:2", "stop:2"))
     acceptStoppedSettings()
+    val tile = AgentTileService()
+    tile.onStartListening()
+    check(tile.qsTile!!.state == android.service.quicksettings.Tile.STATE_INACTIVE)
+    tile.onClick()
+    check(tile.starts == 0 && tile.stops == 1) { "tile started a second pending run" }
+    check(tile.qsTile!!.subtitle == "Durduruldu") { "pending stop left tile connecting" }
+    AgentSettings.saved = mapOf("address" to "test:443", "id" to "original", "token" to "test", "fingerprint" to "test")
+    tile.onClick()
+    check(tile.starts == 1 && AgentService.running)
+    rejectActiveSettings()
+    check(tile.qsTile!!.state == android.service.quicksettings.Tile.STATE_INACTIVE)
+    val canceled = tile.dispatched!!
+    tile.onClick()
+    val stale = AgentService()
+    stale.onCreate()
+    stale.onStartCommand(canceled, 0, 3)
+    check(!AgentService.running && AgentService.status == "Durduruldu")
+    stale.onDestroy()
+    worker(stale).submit {}.get(5, TimeUnit.SECONDS)
+    Handler.drain()
+    check(Mobile.events.none { it == "connect:3" }) { "canceled request started Go" }
     println("PASS: delayed old startup, serialized teardown/restart, stale callback guard, active settings rejection, stopped settings/start acceptance")
     kotlin.system.exitProcess(0)
 }
@@ -202,14 +240,11 @@ STUBS.update({
     'flutter.kt': '''package io.flutter.embedding.android
 import android.content.Intent
 import io.flutter.embedding.engine.FlutterEngine
-open class FlutterActivity {
-    var starts = 0
-    var failStart = false
+open class FlutterActivity : android.content.Context() {
     open fun configureFlutterEngine(engine: FlutterEngine) {}
     fun checkSelfPermission(permission: String) = 0
     fun requestPermissions(permissions: Array<String>, code: Int) {}
-    fun startForegroundService(intent: Intent) { if (failStart) error("dispatch denied"); starts++ }
-    fun stopService(intent: Intent) {}
+
 }
 ''',
     'engine.kt': '''package io.flutter.embedding.engine
@@ -275,6 +310,40 @@ fun acceptStoppedSettings() {
 }
 ''',
 })
+STUBS.update({
+    'tile.kt': """package android.service.quicksettings
+class Tile {
+    var label = ""
+    var state = 0
+    var subtitle = ""
+    var contentDescription = ""
+    fun updateTile() {}
+    companion object { const val STATE_ACTIVE = 2; const val STATE_INACTIVE = 1 }
+}
+open class TileService : android.app.Service() {
+    val qsTile: Tile? = Tile()
+    val isLocked = false
+    open fun onStartListening() {}
+    open fun onStopListening() {}
+    open fun onClick() {}
+    fun unlockAndRun(task: () -> Unit) { task() }
+    fun startActivityAndCollapse(intent: android.content.Intent) {}
+    fun startActivityAndCollapse(intent: android.app.PendingIntent) {}
+    companion object {
+        fun requestListeningState(context: android.content.Context, name: android.content.ComponentName) {}
+    }
+}
+""",
+    'toast.kt': """package android.widget
+class Toast {
+    fun show() {}
+    companion object {
+        const val LENGTH_LONG = 1
+        fun makeText(context: Any, text: String, length: Int) = Toast()
+    }
+}
+""",
+})
 STUBS['os.kt'] += '\nobject Build { object VERSION { const val SDK_INT = 33 } }\n'
 
 
@@ -285,7 +354,7 @@ def main():
         work = Path(tmp)
         for name, content in STUBS.items():
             (work / name).write_text(content)
-        sources = [str(SERVICE), str(SERVICE.with_name('MainActivity.kt')), *(str(work / name) for name in STUBS)]
+        sources = [str(SERVICE), str(SERVICE.with_name('MainActivity.kt')), str(SERVICE.with_name('AgentTileService.kt')), *(str(work / name) for name in STUBS)]
         kotlinc = shutil.which('kotlinc')
         if kotlinc:
             compiler = [kotlinc]

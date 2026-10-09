@@ -40,13 +40,15 @@ class MainActivity : FlutterActivity() {
                         }
                         val ticket = AgentService.reserveStart() ?: error("Agent already running")
                         intent.putExtra("generation", ticket)
+                        AgentTileService.refresh(this)
                         try { startForegroundService(intent) }
-                        catch (e: Exception) { AgentService.cancelStart(ticket); throw e }
+                        catch (e: Exception) { AgentService.cancelStart(ticket); AgentTileService.refresh(this); throw e }
                         result.success(null)
                     } catch (e: Exception) { result.error("START", "Arka plan servisi başlatılamadı", null) }
                 }
                 "stop" -> {
                     AgentService.cancelPendingStart()
+                    AgentTileService.refresh(this)
                     stopService(Intent(this, AgentService::class.java))
                     result.success(null)
                 }
