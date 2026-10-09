@@ -38,11 +38,15 @@ class MainActivity : FlutterActivity() {
                         if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
                             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
                         }
-                        startForegroundService(intent)
+                        val ticket = AgentService.reserveStart() ?: error("Agent already running")
+                        intent.putExtra("generation", ticket)
+                        try { startForegroundService(intent) }
+                        catch (e: Exception) { AgentService.cancelStart(ticket); throw e }
                         result.success(null)
                     } catch (e: Exception) { result.error("START", "Arka plan servisi başlatılamadı", null) }
                 }
                 "stop" -> {
+                    AgentService.cancelPendingStart()
                     stopService(Intent(this, AgentService::class.java))
                     result.success(null)
                 }

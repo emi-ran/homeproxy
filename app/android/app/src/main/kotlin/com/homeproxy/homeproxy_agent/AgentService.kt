@@ -15,6 +15,24 @@ class AgentService : Service() {
             private set
         @Volatile var running = false
             private set
+        private var generation = 0L
+        private var pending = false
+        fun reserveStart(): Long? {
+            if (running) return null
+            generation++
+            pending = true
+            running = true
+            status = "Bağlanıyor"
+            return generation
+        }
+        fun cancelStart(ticket: Long) {
+            if (pending && generation == ticket) {
+                pending = false
+                running = false
+                status = "Durduruldu"
+            }
+        }
+        fun cancelPendingStart() { cancelStart(generation) }
         // Process owner: replacement services must wait for old startup AND stop.
         private val worker = Executors.newSingleThreadExecutor()
     }
@@ -53,6 +71,12 @@ class AgentService : Service() {
         // No automatic reconnect after process death; null restart has no credentials.
         if (intent == null) { stopSelf(); return START_NOT_STICKY }
         if (started) return START_NOT_STICKY
+        val ticket = intent.getLongExtra("generation", 0L)
+        if (ticket != 0L && (!pending || ticket != generation)) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        pending = false
         running = true
         publish("Bağlanıyor")
         startForeground(1, notification())

@@ -52,6 +52,7 @@ class AgentTileService : TileService() {
 
     private fun toggle() {
         if (AgentService.running) {
+            AgentService.cancelPendingStart()
             stopService(Intent(this, AgentService::class.java))
             return
         }
@@ -63,7 +64,11 @@ class AgentTileService : TileService() {
             val intent = Intent(this, AgentService::class.java)
             for (key in listOf("address", "id", "token", "fingerprint")) intent.putExtra(key, settings[key] as? String ?: "")
             intent.putExtra("insecure", settings["insecure"] as? Boolean ?: false)
-            startForegroundService(intent)
+            val ticket = AgentService.reserveStart() ?: return
+            intent.putExtra("generation", ticket)
+            refresh(this)
+            try { startForegroundService(intent) }
+            catch (e: Exception) { AgentService.cancelStart(ticket); refresh(this); throw e }
         } catch (_: Exception) {
             Toast.makeText(this, "HomeProxy başlatılamadı. Uygulamadaki ayarları kontrol edin.", Toast.LENGTH_LONG).show()
             val open = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

@@ -20,6 +20,7 @@ open class Intent {
     var action: String? = null
     fun setAction(value: String): Intent { action = value; return this }
     fun putExtra(key: String, value: Any): Intent = this
+    fun getLongExtra(key: String, default: Long): Long = default
     fun getStringExtra(key: String): String? = null
     fun getBooleanExtra(key: String, default: Boolean): Boolean = default
 }
@@ -129,6 +130,16 @@ fun main() {
         error.printStackTrace()
         kotlin.system.exitProcess(1)
     }
+    val activity = MainActivity()
+    activity.configureFlutterEngine(io.flutter.embedding.engine.FlutterEngine())
+    val first = ChannelResult()
+    io.flutter.plugin.common.MethodChannel.handler(
+        io.flutter.plugin.common.MethodCall("start", emptyMap<String, Any?>()), first)
+    check(first.succeeded && activity.starts == 1)
+    check(AgentService.running && AgentService.status == "Bağlanıyor") {
+        "accepted start was not reserved before service dispatch"
+    }
+    rejectActiveSettings()
     val old = AgentService()
     old.onCreate()
     old.onStartCommand(Intent(), 0, 1)
