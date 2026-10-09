@@ -59,6 +59,8 @@ class AgentService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        // Bind unconsumed cleanup to the reservation present at creation.
+        if (pending) ownerGeneration = generation
         getSystemService(NotificationManager::class.java).createNotificationChannel(NotificationChannel("tunnel", "Proxy bağlantısı", NotificationManager.IMPORTANCE_LOW))
         agent.setStatusListener(object : StatusListener {
             override fun onStatus(next: String) {
@@ -106,6 +108,10 @@ class AgentService : Service() {
 
     override fun onDestroy() {
         destroyed = true
+        if (!started && ownerGeneration != 0L) {
+            cancelStart(ownerGeneration)
+            AgentTileService.refresh(this)
+        }
         if (started && ownerGeneration == generation) publish("Durduruluyor")
         // Shared queue also holds replacement startup until this stop completes.
         worker.execute {

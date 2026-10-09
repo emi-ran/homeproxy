@@ -267,7 +267,26 @@ fun main() {
     worker(stale).submit {}.get(5, TimeUnit.SECONDS)
     Handler.drain()
     check(Mobile.events.none { it == "connect:3" }) { "canceled request started Go" }
-    println("PASS: delayed old startup, serialized teardown/restart, stale callback guard, active settings rejection, stopped settings/start acceptance")
+    AgentService.reserveStart()!!
+    val unconsumed = AgentService()
+    unconsumed.onCreate()
+    unconsumed.onDestroy()
+    worker(unconsumed).submit {}.get(5, TimeUnit.SECONDS)
+    Handler.drain()
+    check(!AgentService.running && AgentService.status == "Durduruldu") {
+        "destruction before consumption stranded accepted generation"
+    }
+    val older = AgentService()
+    AgentService.reserveStart()!!
+    older.onCreate()
+    AgentService.cancelPendingStart()
+    val newer = AgentService.reserveStart()!!
+    older.onDestroy()
+    worker(older).submit {}.get(5, TimeUnit.SECONDS)
+    Handler.drain()
+    check(AgentService.running) { "old unstarted destruction canceled newer reservation" }
+    AgentService.cancelStart(newer)
+    println("PASS: stale queued delivery, unconsumed gate cleanup, delayed startup, serialized teardown/restart, settings and tile controls")
     kotlin.system.exitProcess(0)
 }
 ''',
